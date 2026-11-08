@@ -19,13 +19,13 @@
 
 <a href="#gallery"><img src="docs/images/hero-light.jpg" width="900" alt="Tuck: glass zones on the desktop"></a>
 
-<p><a href="#features">Features</a> · <a href="#gallery">Gallery</a> · <a href="#install">Install</a> · <a href="#faq">FAQ</a> · <a href="#contributing">Contributing</a></p>
+<p><a href="#features">Features</a> · <a href="#gallery">Gallery</a> · <a href="#install">Install</a> · <a href="#faq">FAQ</a> · <a href="#contributing">Contributing</a> · <a href="#-release-history">Releases</a></p>
 
 </div>
 
 ## Latest
 
-**v2.1.0** (first public release): Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, drag to reorder, crash watchdog. Full history in the [CHANGELOG](CHANGELOG.md).
+**v2.1.0** (first public release): Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, drag to reorder, crash watchdog. Every version is in the [release history](#-release-history) below; full notes in the [CHANGELOG](CHANGELOG.md).
 
 ## What it is
 
@@ -132,6 +132,14 @@ Issues and PRs welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report security 
 ## Credits
 
 Product behaviour inspired by [DesktopFramesPlus](https://github.com/limbo666/DesktopFramesPlus) (MIT) on Windows. Tuck is a Swift / AppKit rewrite for macOS and copies none of its code. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## 📦 Release history
+
+| Version | Date | What changed | Download |
+|---|---|---|---|
+| **v2.1.0** `latest` | 2026-11-08 | First public release: Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, crash watchdog · [details](CHANGELOG.md#v210--2026-11-08) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.1.0) |
+
+Every version stays on [Releases](https://github.com/3520566741-YCLi/tuck-for-mac/releases); each release page has the installer under **Assets**.
 
 ## License
 
