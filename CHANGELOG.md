@@ -3,7 +3,7 @@
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。所有旧版本都保留在 [Releases](../../releases)。
 Versions follow [Semantic Versioning](https://semver.org/). Every old version stays in [Releases](../../releases).
 
-## v2.1.0
+## v2.1.0 · 2026-11-08
 
 第一次公开发布。 / First public release.
 

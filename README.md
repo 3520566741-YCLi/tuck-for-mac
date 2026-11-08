@@ -19,13 +19,13 @@
 
 <a href="#画廊"><img src="docs/images/hero-light.jpg" width="900" alt="Tuck：桌面上的玻璃分区"></a>
 
-<p><a href="#它能做什么">功能</a> · <a href="#画廊">画廊</a> · <a href="#安装">安装</a> · <a href="#常见问题">常见问题</a> · <a href="#参与贡献">参与贡献</a></p>
+<p><a href="#它能做什么">功能</a> · <a href="#画廊">画廊</a> · <a href="#安装">安装</a> · <a href="#常见问题">常见问题</a> · <a href="#参与贡献">参与贡献</a> · <a href="#-版本历史--releases">版本历史</a></p>
 
 </div>
 
 ## 最近更新
 
-**v2.1.0**（第一次公开发布）：液态玻璃分区三种质感、收成胶囊、桌面自动隐藏、像访达一样操作、分区内拖动排序、崩溃看门狗。完整记录见 [CHANGELOG](CHANGELOG.md)。
+**v2.1.0**（第一次公开发布）：液态玻璃分区三种质感、收成胶囊、桌面自动隐藏、像访达一样操作、分区内拖动排序、崩溃看门狗。全部版本见下方 [版本历史](#-版本历史--releases)，完整记录见 [CHANGELOG](CHANGELOG.md)。
 
 ## 它是什么
 
@@ -132,6 +132,14 @@ Tuck 显示的是系统给的图标。有的应用（比如把 PDF 默认交给�
 ## 致谢
 
 产品行为参考了 Windows 上的 [DesktopFramesPlus](https://github.com/limbo666/DesktopFramesPlus)（MIT）。Tuck 用 Swift / AppKit 为 macOS 重新实现，没有复制它的代码。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 📦 版本历史 / Releases
+
+| 版本 | 日期 | 这一版改了什么 | 下载 |
+|---|---|---|---|
+| **v2.1.0** `最新` | 2026-11-08 | 第一次公开发布：液态玻璃分区三种质感、收成胶囊、桌面自动隐藏、像访达一样操作、崩溃看门狗 · [详细](CHANGELOG.md#v210--2026-11-08) | [下载](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.1.0) |
+
+所有版本都一直保留在 [Releases](https://github.com/3520566741-YCLi/tuck-for-mac/releases)，每个版本页的 **Assets** 里有安装包。
 
 ## 许可证
 
