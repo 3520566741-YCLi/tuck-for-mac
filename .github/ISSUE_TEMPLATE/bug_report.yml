@@ -1,0 +1,42 @@
+name: 🐞 Bug 报告 / Bug report
+description: 有东西坏了 / Something is broken
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢反馈！**截图里请不要带你自己的文件名和个人信息。** 安全问题请走 [私下报告](../../security/advisories/new)。
+        Thanks! **Please keep your own file names and personal data out of screenshots.** Security issues go through [private reporting](../../security/advisories/new).
+  - type: dropdown
+    id: area
+    attributes:
+      label: 哪一块 / Area
+      options: [玻璃分区 Glass zones, 收起胶囊 Capsule, 拖放与移动 Drag & move, 桌面隐藏 Desktop hiding, 拖动排序 Reorder, 菜单栏 Menu bar, 多显示器 Displays, 安装 Install, 其他 Other]
+    validations: {required: true}
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 你期望的和实际的 / Expected vs. actual
+    validations: {required: true}
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么复现 / Steps to reproduce
+      placeholder: "1. …\n2. …"
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本和芯片 / macOS version and chip
+      placeholder: macOS 26.1 · M3
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes:
+      label: Tuck 版本 / Tuck version
+      placeholder: v2.1.0（菜单栏 → 关于 Tuck / About Tuck）
+  - type: textarea
+    id: logs
+    attributes:
+      label: 截图或日志 / Screenshots or logs
+      description: 控制台里 Tuck 的相关几行即可 / A few relevant lines from Console

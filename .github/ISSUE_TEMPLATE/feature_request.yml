@@ -1,0 +1,13 @@
+name: ✨ 功能建议 / Feature request
+description: 想让 Tuck 多会一件事 / Something Tuck should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题 / What problem does it solve
+    validations: {required: true}
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你设想的样子 / What you have in mind
