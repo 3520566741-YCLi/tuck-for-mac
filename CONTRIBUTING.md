@@ -19,6 +19,8 @@
    For UI changes, attach day/night screenshots in all three glass styles; check nothing touches an edge, gets clipped, or bleeds through.
 4. **截图里不要带你自己的文件名或个人信息**，用演示文件（`DESKTOPFRAMES_DATA_DIR` / `DESKTOPFRAMES_DESKTOP_DIR` 可以换一套独立的数据和桌面目录）。
    **No personal file names in screenshots;** use demo files (`DESKTOPFRAMES_DATA_DIR` / `DESKTOPFRAMES_DESKTOP_DIR` point Tuck at a separate data and desktop folder).
+5. README 截图出中英两版：中文放 `docs/images/`，英文放 `docs/images/en/`，同一画面、同一状态、同一尺寸（下一版起 `TUCK_LANG=en` / `TUCK_LANG=zh` 可以强制界面语言）。
+   README screenshots come in Chinese and English: Chinese in `docs/images/`, English in `docs/images/en/`, same scene, state and size (from the next release, `TUCK_LANG=en` / `TUCK_LANG=zh` forces the UI language).
 
 ## 几条规矩 / House rules
 

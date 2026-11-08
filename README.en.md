@@ -17,7 +17,7 @@
 
 <h3><a href="https://github.com/3520566741-YCLi/tuck-for-mac/releases/latest">⬇︎ Download the latest Tuck</a></h3>
 
-<a href="#gallery"><img src="docs/images/hero-light.jpg" width="900" alt="Tuck: glass zones on the desktop"></a>
+<a href="#gallery"><img src="docs/images/en/hero-light.jpg" width="900" alt="Tuck: glass zones on the desktop"></a>
 
 <p><a href="#features">Features</a> · <a href="#gallery">Gallery</a> · <a href="#install">Install</a> · <a href="#faq">FAQ</a> · <a href="#contributing">Contributing</a> · <a href="#-release-history">Releases</a></p>
 
@@ -51,20 +51,20 @@ Picture a few **clear glass trays** on your desktop:
 
 ## Gallery
 
-> Real screenshots on a Mac, with demo files.
+> Real screenshots on a Mac, with demo files. They show Tuck's English interface, which follows your system language and ships with the next release; v2.1.0 is Chinese only.
 
 #### Follows dark mode
-<img src="docs/images/hero-dark.jpg" width="860" alt="Night">
+<img src="docs/images/en/hero-dark.jpg" width="860" alt="Night">
 
 #### Three glass styles
 | B Frosted | C Dark |
 |:---:|:---:|
-| <img src="docs/images/glass-frosted.jpg" alt="B Frosted"> | <img src="docs/images/glass-dark.jpg" alt="C Dark"> |
+| <img src="docs/images/en/glass-frosted.jpg" alt="B Frosted"> | <img src="docs/images/en/glass-dark.jpg" alt="C Dark"> |
 
 #### Capsules · menu bar
 | Expanded and capsules | Menu bar menu |
 |:---:|:---:|
-| <img src="docs/images/collapse.jpg" alt="Expanded and capsules"> | <img src="docs/images/menu.png" width="360" alt="Menu bar menu"> |
+| <img src="docs/images/en/collapse.jpg" alt="Expanded and capsules"> | <img src="docs/images/en/menu.png" width="450" alt="Menu bar menu"> |
 
 ## Install
 
