@@ -7,10 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var manager: ZoneWindowManager?
     private var loadNoticeShown = false
     private var peekHotKey: PeekHotKey?
-    private var glassMenuItems: [NSMenuItem] = []
-    private var edgeMenuItems: [NSMenuItem] = []
-    private var refractionMenuItems: [NSMenuItem] = []
     private var captureMenuItem: NSMenuItem?
+    /// 「桌面上的新下载自动收进」子菜单的代理（菜单只弱引用代理，这里留住它）。
+    private var collectMenuDelegate: CollectDownloadsMenu?
     private var termSource: DispatchSourceSignal?
 
     /// 已在运行时又从访达 / 启动台打开：系统发来“重新打开”，弹出菜单栏菜单回应。
@@ -108,41 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
-    /// 菜单栏：切换玻璃质感。
-    @objc private func selectGlassStyle(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let style = GlassStyle(rawValue: raw) else { return }
-        GlassSettings.shared.style = style
-        for item in glassMenuItems {
-            item.state = (item.representedObject as? String) == raw ? .on : .off
-        }
-    }
-
-    /// 菜单栏：切换玻璃边缘光效。
-    @objc private func selectGlassEdge(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let edge = GlassEdge(rawValue: raw) else { return }
-        GlassSettings.shared.edge = edge
-        for item in edgeMenuItems {
-            item.state = (item.representedObject as? String) == raw ? .on : .off
-        }
-    }
-
     /// 菜单栏：光随屏幕角度变化（没有角度传感器的 Mac 上打开也没影响，玻璃保持固定光）。
     @objc private func toggleLidLight(_ sender: NSMenuItem) {
         LidLight.shared.isEnabled.toggle()
         sender.state = LidLight.shared.isEnabled ? .on : .off
-    }
-
-    /// 菜单栏：切换折射（边缘拉伸 / 光栅玻璃 / 关）。
-    @objc private func selectRefraction(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = GlassRefraction(rawValue: raw) else { return }
-        GlassSettings.shared.refraction = mode
-        for item in refractionMenuItems {
-            item.state = (item.representedObject as? String) == raw ? .on : .off
-        }
-        // 动态壁纸下没开截壁纸层：说明原因并一键打开，不让用户选了却什么都看不到
-        if mode != .off, WallpaperCapture.offerIfNeeded() {
-            captureMenuItem?.state = WallpaperCapture.isEnabled ? .on : .off
-        }
     }
 
     /// 菜单栏：动态壁纸也折射（只截壁纸层，要录屏权限；打开时才请求一次）。
@@ -191,53 +159,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         createMenu.addItem(makeItem(L("应用分区…", "App Zone…"), #selector(ZoneWindowManager.newAppZone(_:)), manager))
         createMenu.addItem(.separator())
         createMenu.addItem(makeItem(L("文件夹分区（拖入会真实移动文件）…", "Folder Zone (dropped files really move)…"), #selector(ZoneWindowManager.newFolderZone(_:)), manager))
+        createMenu.addItem(makeItem(L("下载分区（浏览器直接下载到这里）…", "Download Zone (browsers download straight into it)…"), #selector(ZoneWindowManager.newDownloadZone(_:)), manager))
         createItem.submenu = createMenu
         root.addItem(createItem)
 
-        // 玻璃质感（三选一，即时生效）
-        let glassItem = NSMenuItem(title: L("玻璃质感", "Glass Style"), action: nil, keyEquivalent: "")
+        // 玻璃：质感 / 折射 / 边缘都在每个分区标题栏的调色板里单独调；这里只留两个全局开关
+        let glassItem = NSMenuItem(title: L("玻璃效果", "Glass Effects"), action: nil, keyEquivalent: "")
         let glassMenu = NSMenu()
-        glassMenuItems = GlassStyle.allCases.map { style in
-            let item = NSMenuItem(title: style.title, action: #selector(selectGlassStyle(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = style.rawValue
-            item.state = GlassSettings.shared.style == style ? .on : .off
-            glassMenu.addItem(item)
-            return item
-        }
+        let glassHint = NSMenuItem(title: L("质感、折射、边缘：点分区标题栏的调色板，每个分区单独调", "Glass, refraction and edge: use each zone's palette button"), action: nil, keyEquivalent: "")
+        glassHint.isEnabled = false
+        glassMenu.addItem(glassHint)
         glassMenu.addItem(.separator())
-        let edgeHeader = NSMenuItem(title: L("边缘光效", "Edge Light"), action: nil, keyEquivalent: "")
-        edgeHeader.isEnabled = false
-        glassMenu.addItem(edgeHeader)
-        edgeMenuItems = GlassEdge.allCases.map { edge in
-            let item = NSMenuItem(title: edge.title, action: #selector(selectGlassEdge(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = edge.rawValue
-            item.state = GlassSettings.shared.edge == edge ? .on : .off
-            item.indentationLevel = 1
-            glassMenu.addItem(item)
-            return item
-        }
-        glassMenu.addItem(.separator())
-        let refractionHeader = NSMenuItem(title: L("折射", "Refraction"), action: nil, keyEquivalent: "")
-        refractionHeader.isEnabled = false
-        glassMenu.addItem(refractionHeader)
-        refractionMenuItems = GlassRefraction.allCases.map { mode in
-            let item = NSMenuItem(title: mode.title, action: #selector(selectRefraction(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = GlassSettings.shared.refraction == mode ? .on : .off
-            item.indentationLevel = 1
-            glassMenu.addItem(item)
-            return item
-        }
         let captureItem = NSMenuItem(title: L("动态壁纸也折射（只截壁纸层，需录屏权限）", "Refract dynamic wallpapers too (captures only the wallpaper layer; needs Screen Recording)"), action: #selector(toggleCaptureWallpaper(_:)), keyEquivalent: "")
         captureItem.target = self
         captureMenuItem = captureItem
         captureItem.state = WallpaperCapture.isEnabled ? .on : .off
-        captureItem.indentationLevel = 1
         glassMenu.addItem(captureItem)
-        glassMenu.addItem(.separator())
         let lidItem = NSMenuItem(title: L("光随屏幕角度变化（推拉屏幕时高光会滑动）", "Light follows the lid angle (rim light slides as you tilt the screen)"), action: #selector(toggleLidLight(_:)), keyEquivalent: "")
         lidItem.target = self
         lidItem.state = LidLight.shared.isEnabled ? .on : .off
@@ -251,6 +188,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hideItem.state = manager.isHideOnDesktopEnabled ? .on : .off
         manager.hideOnDesktopMenuItem = hideItem
         root.addItem(hideItem)
+        // 新下载（「下载」文件夹 + 桌面）自动收进某个分区（默认关）
+        let collectItem = NSMenuItem(title: L("新下载自动移进分区", "Move New Downloads Into"), action: nil, keyEquivalent: "")
+        let collectMenu = NSMenu()
+        collectMenu.autoenablesItems = false
+        let collectDelegate = CollectDownloadsMenu(manager: manager)
+        collectMenuDelegate = collectDelegate
+        collectMenu.delegate = collectDelegate
+        collectItem.submenu = collectMenu
+        root.addItem(collectItem)
         // 「Tuck 分区」入口文件夹：被隐藏的桌面文件在别的软件的打开 / 上传窗口里从这里找
         let mirrorItem = NSMenuItem(title: L("在个人文件夹放「Tuck 分区」入口（上传文件时用）", "Keep a “Tuck Zones” folder in Home (for upload dialogs)"), action: #selector(ZoneWindowManager.toggleZoneMirror(_:)), keyEquivalent: "")
         mirrorItem.target = manager

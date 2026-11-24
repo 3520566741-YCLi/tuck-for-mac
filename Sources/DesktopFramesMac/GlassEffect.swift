@@ -3,7 +3,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// 三种玻璃质感（全局设置，三选一，切换即时生效）。
+/// 三种玻璃质感（菜单栏里是默认值，每个分区还能在「外观」里单独选，切换即时生效）。
 /// - clear   A 清透（默认）：系统 Liquid Glass 的 clear 样式，不着色，壁纸几乎完整透出。
 /// - frosted B 磨砂：regular 样式 + 约 18% 白色着色，背后只剩色块。
 /// - dark    C 暗色：regular 样式 + 深色着色，适合亮壁纸。
@@ -17,6 +17,24 @@ enum GlassStyle: String, CaseIterable, Identifiable {
         case .clear: return L("A 清透", "A Clear")
         case .frosted: return L("B 磨砂", "B Frosted")
         case .dark: return L("C 暗色", "C Dark")
+        }
+    }
+
+    /// 分区「外观」里用的短名字。
+    var shortTitle: String {
+        switch self {
+        case .clear: return L("清透", "Clear")
+        case .frosted: return L("磨砂", "Frosted")
+        case .dark: return L("暗色", "Dark")
+        }
+    }
+
+    /// 面板里鼠标停留时的说明。
+    var hint: String {
+        switch self {
+        case .clear: return L("最通透，壁纸几乎完整透出来", "The clearest; the wallpaper shows through almost fully")
+        case .frosted: return L("白色磨砂，背后只剩模糊的色块", "White frosted glass; only soft colour shows through")
+        case .dark: return L("深色玻璃，适合很亮的壁纸", "Dark glass, good on bright wallpapers")
         }
     }
 
@@ -71,10 +89,34 @@ enum GlassEdge: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .classic: return L("原版（一圈细白边）", "Original (thin white rim)")
-        case .crystal: return L("晶透：受光边缘高光", "Crystal: light-catching rim")
+        case .classic: return L("细边（一圈细白边）", "Thin rim (a thin white outline)")
+        case .crystal: return L("高光（受光的边会亮）", "Highlight (the lit edge glows)")
         case .prism: return L("棱镜：高光 + 淡淡色散", "Prism: rim + faint dispersion")
-        case .slab: return L("厚玻璃：倒角厚度 + 细颗粒", "Slab: bevel depth + fine grain")
+        case .slab: return L("厚边（倒角厚度 + 细颗粒）", "Thick edge (bevel depth + fine grain)")
+        }
+    }
+
+    /// 给用户选的只有这三种（棱镜和晶透肉眼几乎分不出来，旧设置里的棱镜按晶透显示）。
+    static let choices: [GlassEdge] = [.classic, .crystal, .slab]
+
+    /// 旧设置里的棱镜 → 晶透。
+    var normalized: GlassEdge { self == .prism ? .crystal : self }
+
+    /// 分区「外观」里用的短名字。
+    var shortTitle: String {
+        switch self {
+        case .classic: return L("细边", "Thin rim")
+        case .crystal, .prism: return L("高光", "Highlight")
+        case .slab: return L("厚边", "Thick edge")
+        }
+    }
+
+    /// 面板里鼠标停留时的说明。
+    var hint: String {
+        switch self {
+        case .classic: return L("一圈细细的白边，最低调", "A thin white outline, the most subtle")
+        case .crystal, .prism: return L("受光那一侧的边会亮起来，像玻璃反光", "The edge facing the light glows, like glass catching light")
+        case .slab: return L("边缘有一圈厚度和细颗粒，像厚玻璃", "A visible bevel and fine grain, like thick glass")
         }
     }
 }
@@ -100,8 +142,35 @@ final class GlassSettings: ObservableObject {
     @Published var edge: GlassEdge {
         didSet {
             UserDefaults.standard.set(edge.rawValue, forKey: Self.edgeDefaultsKey)
-            LidLight.shared.setWanted(edge != .classic)
+            refreshLidWanted()
         }
+    }
+
+    /// 单独设了边缘光效的分区用到的光效（不含跟随默认的分区）。任何分区要“随屏幕角度的光”时才开角度传感器。
+    private var zoneEdges: Set<GlassEdge> = []
+
+    func setZoneEdges(_ edges: Set<GlassEdge>) {
+        guard edges != zoneEdges else { return }
+        zoneEdges = edges
+        refreshLidWanted()
+    }
+
+    private func refreshLidWanted() {
+        LidLight.shared.setWanted(edge != .classic || zoneEdges.contains { $0 != .classic })
+    }
+
+    // MARK: 每个分区实际用的值（分区没单独设 = 用默认值）
+
+    func style(for appearance: ZoneAppearance?) -> GlassStyle {
+        appearance?.glassStyle.flatMap(GlassStyle.init(rawValue:)) ?? style
+    }
+
+    func edge(for appearance: ZoneAppearance?) -> GlassEdge {
+        (appearance?.glassEdge.flatMap(GlassEdge.init(rawValue:)) ?? edge).normalized
+    }
+
+    func refraction(for appearance: ZoneAppearance?) -> GlassRefraction {
+        appearance?.glassRefraction.flatMap(GlassRefraction.init(rawValue:)) ?? refraction
     }
 
     private init() {
@@ -109,8 +178,8 @@ final class GlassSettings: ObservableObject {
         style = raw.flatMap(GlassStyle.init(rawValue:)) ?? .clear
         refraction = UserDefaults.standard.string(forKey: Self.refractionDefaultsKey).flatMap(GlassRefraction.init(rawValue:)) ?? .edge
         let edgeRaw = UserDefaults.standard.string(forKey: Self.edgeDefaultsKey)
-        edge = edgeRaw.flatMap(GlassEdge.init(rawValue:)) ?? .classic
-        LidLight.shared.setWanted(edge != .classic)
+        edge = (edgeRaw.flatMap(GlassEdge.init(rawValue:)) ?? .classic).normalized
+        refreshLidWanted()
     }
 }
 

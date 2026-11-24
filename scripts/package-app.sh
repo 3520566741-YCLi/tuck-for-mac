@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "${0:A:h}/.."
 
-VERSION="2.2.0"
+VERSION="2.3.0"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 IDENTITY="${SIGN_IDENTITY:--}"   # 没设就 ad-hoc 签名；有开发者证书可 export SIGN_IDENTITY="Apple Development: …"
 APP_NAME="Tuck"

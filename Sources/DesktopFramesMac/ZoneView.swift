@@ -65,17 +65,21 @@ struct ZoneView: View {
     var body: some View {
         let collapsed = zone?.appearance.collapsed ?? false
         let radius: CGFloat = collapsed ? Self.collapsedCornerRadius : Self.expandedCornerRadius
+        // 这个分区实际用的质感：分区里单独选过就用分区的，否则跟随菜单栏默认值
+        let style = glass.style(for: zone?.appearance)
+        let edge = glass.edge(for: zone?.appearance)
+        let refraction = glass.refraction(for: zone?.appearance)
         ZStack {
             // 1) 苹果官方液态玻璃底板（macOS 26 NSGlassEffectView）：白色磨砂 + 系统受光高光，
             //    圆角由玻璃自身控制。官方玻璃本体近乎无色，分区色调用下面的极淡染色层给出（类控制中心着色）。
-            GlassEffect(cornerRadius: radius, style: glass.style)
+            GlassEffect(cornerRadius: radius, style: style)
                 .opacity(glassOpacity)
             // 1a) 折射层：边缘拉伸 / 光栅玻璃（读壁纸算一次，静止零耗电）；收起成胶囊时不画
-            if let zone, !collapsed, glass.refraction != .off {
-                RefractionLayer(zoneID: zoneID, frameKey: zone.frame, mode: glass.refraction, style: glass.style,
+            if let zone, !collapsed, refraction != .off {
+                RefractionLayer(zoneID: zoneID, frameKey: zone.frame, mode: refraction, style: style,
                                 cornerRadius: radius, manager: manager)
                     // 边缘折射是玻璃本身的形状，不该跟着“玻璃透明度”一起变淡（调得很透时边缘就看不出来了）
-                    .opacity(glass.refraction == .edge ? max(glassOpacity, 0.9) : glassOpacity)
+                    .opacity(refraction == .edge ? max(glassOpacity, 0.9) : glassOpacity)
                     .transition(.opacity)
             }
             if let zone {
@@ -90,7 +94,7 @@ struct ZoneView: View {
                     .stroke(Color.accentColor, lineWidth: 2)
             } else {
                 // 玻璃边缘光学细节（受光高光 / 倒角 / 色散 / 颗粒，按菜单栏“边缘光效”）
-                LidLitEdgeOverlay(edge: glass.edge, style: glass.style, cornerRadius: radius)
+                LidLitEdgeOverlay(edge: edge, style: style, cornerRadius: radius)
             }
             // 2) 内容与标题：与玻璃同层绘制（不用 .overlay，超矮窗口里内容也能渲染）
             if let zone {
@@ -107,13 +111,13 @@ struct ZoneView: View {
                             .transition(.opacity)
                     }
                 }
-                .shadow(color: .black.opacity(glass.style.textShadowAlpha), radius: 2, x: 0, y: 1)
+                .shadow(color: .black.opacity(style.textShadowAlpha), radius: 2, x: 0, y: 1)
                 // 标题栏永远钉在窗口顶边：ZStack 默认垂直居中，收起 / 展开动画中窗口高度在变，
                 // 内容一淡出，标题栏就会跳到中间再跟着滑回去，看起来就是在抖。
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
-        .environment(\.colorScheme, glass.style.colorScheme ?? systemColorScheme)
+        .environment(\.colorScheme, style.colorScheme ?? systemColorScheme)
         // 玻璃的可见高度由 SwiftUI 动画驱动（窗口本身展开时一步到位、收起时动画结束后再缩），
         // 这样展开时不会出现“窗口变大那一帧旧内容贴在底部”的下沉闪动。
         .frame(height: collapsed ? Self.headerHeight : nil)
@@ -217,6 +221,7 @@ struct ZoneView: View {
             .help(zone.locked ? L("已锁定位置，点击解锁", "Position locked, click to unlock") : L("锁定位置（防止误拖动/缩放）", "Lock position (no accidental moves or resizing)"))
 
             Button {
+                manager.bringZoneToFront(zone.id)
                 showAppearancePanel = true
             } label: {
                 Image(systemName: "paintpalette")
@@ -224,10 +229,11 @@ struct ZoneView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
-            .popover(isPresented: $showAppearancePanel, arrowEdge: .bottom) {
+            // 面板开在按钮右边（分区外侧），不盖住分区里的东西；右边放不下时系统会自动换到别的边
+            .popover(isPresented: $showAppearancePanel, arrowEdge: .trailing) {
                 AppearancePanel(zone: zone, model: model)
             }
-            .help(L("外观设置（透明度 / 主题色）", "Appearance (opacity / tint)"))
+            .help(L("外观设置（质感 / 透明度 / 主题色）", "Appearance (glass / opacity / tint)"))
 
             zoneMenu(zone)
         }
@@ -972,6 +978,7 @@ struct TintOption: Identifiable {
 private struct AppearancePanel: View {
     let zone: Zone
     let model: AppModel
+    @ObservedObject private var glass = GlassSettings.shared
 
     /// 快捷档位：10%–90%，每 10% 一档。
     private static let opacityLevels: [Double] = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
@@ -980,6 +987,29 @@ private struct AppearancePanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L("外观", "Appearance"))
                 .font(.system(size: 13, weight: .semibold))
+
+            // 这个分区现在的样子，点哪个就改成哪个（只改这一个分区）
+            glassRow(
+                L("质感", "Glass"),
+                current: glass.style(for: zone.appearance).rawValue,
+                options: GlassStyle.allCases.map { ($0.rawValue, $0.shortTitle, $0.hint) }
+            ) { model.setGlassOverride(zoneID: zone.id, .style, value: $0) }
+            glassRow(
+                L("折射", "Refraction"),
+                current: glass.refraction(for: zone.appearance).rawValue,
+                options: [GlassRefraction.off, .edge, .fluted].map { ($0.rawValue, $0.shortTitle, $0.hint) }
+            ) { value in
+                model.setGlassOverride(zoneID: zone.id, .refraction, value: value)
+                // 动态壁纸下没开截壁纸层：和菜单栏一样先说明原因，不让人选了却什么都看不到
+                if value != GlassRefraction.off.rawValue { WallpaperCapture.offerIfNeeded() }
+            }
+            glassRow(
+                L("边缘", "Edge"),
+                current: glass.edge(for: zone.appearance).rawValue,
+                options: GlassEdge.choices.map { ($0.rawValue, $0.shortTitle, $0.hint) }
+            ) { model.setGlassOverride(zoneID: zone.id, .edge, value: $0) }
+
+            Divider().opacity(0.4)
 
             HStack(spacing: 10) {
                 Text(L("透明度", "Opacity"))
@@ -1053,7 +1083,40 @@ private struct AppearancePanel: View {
             }
         }
         .padding(14)
-        .frame(width: 230)
+        .frame(width: 250)
+    }
+
+    /// 一行质感选项：高亮的就是这个分区现在用的；点别的就只改这个分区。
+    private func glassRow(
+        _ title: String,
+        current: String,
+        options: [(id: String, title: String, hint: String)],
+        set: @escaping (String) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                ForEach(options, id: \.id) { option in
+                    let selected = option.id == current
+                    Button {
+                        if !selected { set(option.id) }
+                    } label: {
+                        Text(option.title)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.08)))
+                            .foregroundStyle(selected ? Color.white : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(option.hint)
+                }
+            }
+        }
     }
 }
 

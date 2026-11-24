@@ -39,7 +39,7 @@ export SIGN_IDENTITY="Apple Development: Your Name (TEAMID)"   # see: security f
 
 - Tuck lives in the menu bar (grid icon) only, not the Dock.
 - Menu bar → **New Zone** → regular zone; drag desktop files in. Their desktop icons are hidden; the files don't move.
-- Menu bar → **Glass Style** → A Clear / B Frosted / C Dark.
+- Each zone's palette button → Glass / Refraction / Edge (set per zone).
 - `⌃⌥D` to peek: zones float above everything.
 - Tuck needs **no** Accessibility, Screen Recording or Full Disk Access permission. If a zone is linked to a protected folder such as Documents or Downloads, macOS asks once; allow it.
 

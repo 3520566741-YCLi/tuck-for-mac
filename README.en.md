@@ -27,6 +27,25 @@
 
 **v2.2.0** (2026-11-24): **more realistic liquid glass** (convex-bevel refraction with a thin bright rim, clear in the middle), Finder-style **auto sort** (name / kind / date / size), glass that **refracts** (edge stretch / fluted glass, dynamic wallpapers too), three new edge lights with a highlight that **follows the lid angle**, a **Finder-style context menu**, a “**Tuck Zones**” folder in Home (so upload dialogs can find tucked files), and an **English interface**. Every version is in the [release history](#-release-history) below; full notes in the [CHANGELOG](CHANGELOG.md).
 
+## How to use the new features (v2.3)
+
+**Glass per zone**
+- Where: the **palette button** on the right of a zone's title bar (the same panel as colour and opacity).
+- Glass: Clear / Frosted / Dark; Refraction: Off / Edge / Fluted; Edge: Thin rim / Highlight / Thick edge. Each click changes only that zone; hover an option to see what it does.
+- The menu bar's global Glass Style setting is gone: after updating, every zone keeps its current look, and new zones start as Clear + Edge + Thin rim. The menu bar's Glass Effects submenu keeps just two switches: “Refract dynamic wallpapers too” and “Light follows the lid angle”.
+
+**Download zones**
+- Where: Tuck menu bar icon › New Zone › **Download Zone…**
+- Creates a real folder inside the “Tuck Zones” folder in your Home (you can drag it to the Finder sidebar), e.g. `~/Tuck Zones/Downloads`. Everything in it shows in the zone, newest first; files still downloading don't.
+- Tuck never deletes this folder, and deleting the zone doesn't delete its files.
+
+**Move new downloads into a zone** (off by default)
+- Where: Tuck menu bar icon › **Move New Downloads Into** › pick a download zone, or “New Download Zone and Move Here…”.
+- Once on, files finished by any browser (Safari, Chrome, Edge, Firefox, Arc…), whether they land in Downloads or on the Desktop, are **moved** into the zone's folder about 2 seconds later and don't stay behind, so there's only one copy. No browser settings to change. This is the only place Tuck moves files, and only when you turn it on.
+- Only new downloads after turning it on: in-progress temp files (.download, .crdownload, .part, .opdownload…) and existing files are left alone; by default only web downloads are collected (screenshots and files you create aren't; untick “Only files downloaded from the web” in the same menu to change that).
+- The first time, Tuck explains this once, then macOS asks whether Tuck may read your Downloads folder: click Allow. If you clicked Don't Allow: System Settings › Privacy & Security › Files & Folders › Tuck › turn on Downloads Folder, then pick the zone again.
+- To put one back: **Undo Last Move** (⌘Z) in the menu bar returns the latest move, or just drag the file out of the zone. Name clashes get a number and nothing is overwritten; deleting in the zone moves to the Trash; when Tuck quits the files stay in the zone's folder.
+
 ## What it is
 
 Picture a few **clear glass trays** on your desktop:
@@ -40,13 +59,15 @@ Picture a few **clear glass trays** on your desktop:
 
 | | Feature | In short |
 |---|---|---|
-| 🪟 | **Liquid Glass zones** | Native Liquid Glass (macOS 26+, frosted blur on older systems). Three looks: **A Clear / B Frosted / C Dark**. |
-| 🔍 | **Glass that refracts** | Bends the wallpaper behind it like real glass: **edge stretch** (default) or **fluted glass** (vertical ribs). Edge lights: Crystal / Prism / Slab; on a MacBook the highlight **follows the lid angle**. |
+| 🪟 | **Liquid Glass zones** | Native Liquid Glass (macOS 26+, frosted blur on older systems). Pick the glass **per zone**: Clear / Frosted / Dark (the palette button on each zone's title bar). |
+| 🔍 | **Glass that refracts** | Bends the wallpaper behind it like real glass: **edge stretch** (default) or **fluted glass** (vertical ribs). Edge: Thin rim / Highlight / Thick edge; on a MacBook the highlight **follows the lid angle**. |
 | 💊 | **Collapse to a capsule** | Click the arrow by the title; the zone shrinks bottom-up into a glass capsule with a spring animation. |
 | 📁 | **Three zone types** | Virtual zones keep entries only · App zones hold favourite apps · Folder zones are backed by a real folder. |
 | 🫥 | **No duplicates** | Desktop files placed in a zone are hidden on the desktop and come back when removed or when Tuck quits. |
 | 🖱️ | **Works like Finder** | Select, double-click, Space for Quick Look, ⌘O / ⌘A / ⌘C; drop into folders or onto apps. **Finder's context menu**: Open With, Get Info, Rename, Duplicate, Make Alias, Compress, Tags, Services; deleting only moves to the Trash and ⌘Z undoes it. |
 | 🗂️ | **“Tuck Zones” folder** | Links to the originals in your Home folder, zone by zone, so other apps' Open / Upload dialogs can find tucked files. |
+| 📥 | **Download zones** | New Zone › Download Zone: a real folder inside “Tuck Zones” whose files all show in the zone, also reachable from the Finder sidebar. |
+| ⬇️ | **Move new downloads into a zone** | Menu “Move New Downloads Into”: finished downloads from any browser (in Downloads or on the Desktop) move into a download zone automatically, no browser settings to change; undoable, off by default. |
 | 🔀 | **Drag to reorder** | Icons make room like a phone home screen; hover over a folder to drop in. |
 | 🔤 | **Auto sort** | Sort By name / kind / date / size, reversible, per zone; display order only, nothing is renamed or moved. |
 | 👀 | **Peek** | `⌃⌥D` lifts all zones above every window. |
@@ -160,7 +181,8 @@ Product behaviour inspired by [DesktopFramesPlus](https://github.com/limbo666/De
 
 | Version | Date | What changed | Download |
 |---|---|---|---|
-| **v2.2.0** `latest` | 2026-11-24 | More realistic liquid glass, auto sort, glass that refracts (edge stretch / fluted, dynamic wallpapers too), new edge lights + lid-angle highlight, Finder-style context menu, “Tuck Zones” folder, English interface · [details](CHANGELOG.md#v220--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.2.0) |
+| **v2.3.0** `latest` | 2026-11-24 | Glass per zone, download zones, move new downloads into a zone (any browser) · [details](CHANGELOG.md#v230--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.3.0) |
+| **v2.2.0** | 2026-11-24 | More realistic liquid glass, auto sort, glass that refracts (edge stretch / fluted, dynamic wallpapers too), new edge lights + lid-angle highlight, Finder-style context menu, “Tuck Zones” folder, English interface · [details](CHANGELOG.md#v220--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.2.0) |
 | **v2.1.0** | 2026-11-08 | First public release: Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, crash watchdog · [details](CHANGELOG.md#v210--2026-11-08) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.1.0) |
 
 Every version stays on [Releases](https://github.com/3520566741-YCLi/tuck-for-mac/releases); each release page has the installer under **Assets**.

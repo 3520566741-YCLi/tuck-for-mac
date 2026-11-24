@@ -3,6 +3,19 @@
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。所有旧版本都保留在 [Releases](../../releases)。
 Versions follow [Semantic Versioning](https://semver.org/). Every old version stays in [Releases](../../releases).
 
+## v2.3.0 · 2026-11-24
+
+每个分区自己的玻璃，下载直接进分区。 / Glass per zone, downloads straight into a zone.
+
+- **每个分区单独调质感**：分区标题栏的调色板里直接选这个分区的 质感（清透 / 磨砂 / 暗色）、折射（关闭 / 边缘拉伸 / 光栅）、边缘（细边 / 高光 / 厚边），点哪个只改这个分区。菜单栏的「玻璃质感」总设置去掉了：升级后每个分区保持原样，新分区默认 清透 + 边缘拉伸 + 细边；旧的「棱镜」边缘并入「高光」。
+  **Glass per zone**: a zone's palette button picks that zone's Glass (Clear / Frosted / Dark), Refraction (Off / Edge / Fluted) and Edge (Thin rim / Highlight / Thick edge). The global Glass Style menu is gone: existing zones keep their look, new zones start as Clear + Edge + Thin rim; the old Prism edge is merged into Highlight.
+- **下载分区**：新建分区 › **下载分区**，在「Tuck 分区」里建一个真实文件夹，里面的文件自动出现在分区里（下载中的临时文件不出现），访达侧栏也点得到。Tuck 永远不删这个文件夹。
+  **Download zones**: New Zone › **Download Zone** creates a real folder inside “Tuck Zones”; its files show in the zone automatically (in-progress downloads don't) and it's reachable from the Finder sidebar. Tuck never deletes it.
+- **新下载自动移进分区**（菜单，默认关）：任何浏览器（Safari / Chrome / Edge / Firefox / Arc 等）新下载完成的文件，在「下载」或桌面上，都会被**移进**选中的下载分区，原处不再保留；不用改浏览器设置。只对打开后新下载完成的文件；各家浏览器的临时文件（.download / .crdownload / .part / .opdownload 等，以及 Firefox 先放的空文件）都等下完再说；同盘原子移动、重名加编号、绝不覆盖；「撤销上次移动」可放回；第一次会说明并请求读「下载」文件夹。
+  **Move new downloads into a zone** (menu, off by default): files finished by any browser (Safari / Chrome / Edge / Firefox / Arc…), in Downloads or on the Desktop, are **moved** into the chosen download zone, with nothing left behind and no browser settings to change. Only new downloads after turning it on; every browser's temp files (.download / .crdownload / .part / .opdownload, and Firefox's empty placeholder) are waited out; same-disk atomic moves, numbered names on clashes, never overwriting; Undo Last Move puts one back; explains and asks for Downloads access the first time.
+- 外观面板开在调色板按钮旁边，并先把这个分区提到前面，不再被旁边的分区盖住。
+  The Appearance panel opens beside the palette button and brings its zone to the front, so neighbouring zones no longer cover it.
+
 ## v2.2.0 · 2026-11-24
 
 会折射的玻璃，像访达一样的右键。 / Glass that refracts, a Finder-style right click.

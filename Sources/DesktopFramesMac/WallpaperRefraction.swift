@@ -26,6 +26,24 @@ enum GlassRefraction: String, CaseIterable, Identifiable {
         case .fluted: return L("光栅玻璃（长虹竖棱）", "Fluted glass (vertical ribs)")
         }
     }
+
+    /// 面板里鼠标停留时的说明。
+    var hint: String {
+        switch self {
+        case .off: return L("不弯折背后的壁纸，最干净", "Doesn't bend the wallpaper; the cleanest look")
+        case .edge: return L("只在边缘一圈弯折壁纸，中间保持通透", "Bends the wallpaper only around the edge; the middle stays clear")
+        case .fluted: return L("整块都是竖棱，像长虹玻璃", "Vertical ribs across the whole pane, like fluted glass")
+        }
+    }
+
+    /// 分区「外观」里用的短名字。
+    var shortTitle: String {
+        switch self {
+        case .off: return L("关闭", "Off")
+        case .edge: return L("边缘拉伸", "Edge")
+        case .fluted: return L("光栅", "Fluted")
+        }
+    }
 }
 
 /// 折射层的全局开关状态（偷看模式时暂停：那时分区后面是别的窗口，不是壁纸）。

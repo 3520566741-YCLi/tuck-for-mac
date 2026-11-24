@@ -18,10 +18,18 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     private var quitWhenTransferEnds = false
     private var quickLookController: QuickLookController?
     /// 上次写到「Tuck 分区」入口文件夹的内容（一样就不再碰磁盘）。
-    private var lastMirrorPlan: [ZoneMirror.Entry]?
+    var lastMirrorPlan: [ZoneMirror.Entry]?
     /// FSEvents 监听条目所在文件夹，有变化才清理失效入口（替代旧的定时轮询）。
     private var folderWatcher: FolderWatcher?
     private var modelObservation: AnyCancellable?
+    /// 「新下载自动收进分区」：每个被看着的文件夹（「下载」和桌面）一个判断器，一个监听，一个等文件下完的重试。
+    var downloadCollectors: [String: DesktopDownloadCollector] = [:]
+    var desktopCollectWatcher: FolderWatcher?
+    var desktopCollectRetry: DispatchWorkItem?
+    /// 正在打开「新下载自动移进」的那个分区（说明文字里要用到它的位置）。
+    var pendingCollectZone: UUID?
+    /// 当前“桌面”（测试实例可以换成测试目录）。
+    var desktopURL: URL? { desktopHider?.desktop }
     /// 桌面原图标隐藏：对账器与“Tuck 隐藏过哪些文件”的记录（单独文件，不进布局 / 备份）。
     private var desktopHider: DesktopHider?
     private var hiddenRegistry: HiddenRegistry?
@@ -178,7 +186,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     func syncZoneMirror() {
         guard isZoneMirrorEnabled else { return }
         let mirror = ZoneMirror(root: zoneMirrorURL)
-        let plan = ZoneMirror.plan(for: model.document.zones)
+        let plan = ZoneMirror.plan(for: model.document.zones, root: zoneMirrorURL)
         guard plan != lastMirrorPlan else { return } // 没变化就不碰磁盘
         lastMirrorPlan = plan
         Self.mirrorQueue.async { mirror.sync(plan) }
@@ -194,7 +202,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     @objc func openZoneMirror(_ sender: Any?) {
         if !FileManager.default.fileExists(atPath: zoneMirrorURL.path) {
             lastMirrorPlan = nil
-            ZoneMirror(root: zoneMirrorURL).sync(ZoneMirror.plan(for: model.document.zones))
+            ZoneMirror(root: zoneMirrorURL).sync(ZoneMirror.plan(for: model.document.zones, root: zoneMirrorURL))
         }
         NSWorkspace.shared.activateFileViewerSelecting([zoneMirrorURL])
     }
@@ -321,6 +329,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     private func startStaleEntryWatching() {
         let watcher = FolderWatcher { [weak self] in
             self?.model.purgeMissingEntries()
+            self?.syncLiveFolders()
             self?.refreshWatchedFolders()
             self?.reconcileDesktopHiding()
         }
@@ -331,12 +340,44 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
                 MainActor.assumeIsolated {
                     self?.refreshWatchedFolders()
                     self?.reconcileDesktopHiding()
+                    self?.refreshDesktopCollector() // 选中的分区被删了就停
+                    self?.fillZoneGlassValues()     // 新建的分区补上自己的质感
+                    self?.refreshZoneGlassEdges()
                 }
             }
+        fillZoneGlassValues()
+        refreshZoneGlassEdges()
         refreshWatchedFolders()
         cleanUpPartialCopies()
         model.purgeMissingEntries() // 启动时补一次（离线期间的变化）
+        syncLiveFolders()           // 下载分区：列出关联文件夹里现有的东西
+        refreshDesktopCollector()   // 桌面新下载自动收（开着才监听）
         reconcileDesktopHiding()    // 启动对账（含上次崩溃后的恢复）
+    }
+
+    static let glassPerZoneMigratedKey = "GlassPerZoneMigrated"
+
+    /// 每个分区都有自己明确的质感 / 折射 / 边缘（菜单栏里已经没有总设置了）：
+    /// - 第一次升级到这一版：还跟着旧总设置的分区，照旧总设置写成它自己的值，看起来一点不变；
+    /// - 之后新建的分区：清透 + 边缘拉伸 + 细边（通透自然的玻璃），再在调色板里改。
+    func fillZoneGlassValues() {
+        let migrated = UserDefaults.standard.bool(forKey: Self.glassPerZoneMigratedKey)
+        let glass = GlassSettings.shared
+        let style = migrated ? GlassStyle.clear : glass.style
+        let refraction = migrated ? GlassRefraction.edge : glass.refraction
+        let edge = migrated ? GlassEdge.classic : glass.edge.normalized
+        for zone in model.document.zones {
+            if zone.appearance.glassStyle == nil { model.setGlassOverride(zoneID: zone.id, .style, value: style.rawValue) }
+            if zone.appearance.glassRefraction == nil { model.setGlassOverride(zoneID: zone.id, .refraction, value: refraction.rawValue) }
+            if zone.appearance.glassEdge == nil { model.setGlassOverride(zoneID: zone.id, .edge, value: edge.rawValue) }
+        }
+        if !migrated { UserDefaults.standard.set(true, forKey: Self.glassPerZoneMigratedKey) }
+    }
+
+    /// 单独设了边缘光效的分区：有要“随屏幕角度的光”的，才开角度传感器。
+    private func refreshZoneGlassEdges() {
+        let edges = Set(model.document.zones.compactMap { $0.appearance.glassEdge.flatMap(GlassEdge.init(rawValue:)) })
+        GlassSettings.shared.setZoneEdges(edges)
     }
 
     /// 上次跨盘移动途中崩溃留下的未完成临时副本（Tuck 自己创建、隐藏名字），启动时清掉。
@@ -355,7 +396,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     }
 
     /// 需要监听的文件夹 = 各条目的父目录 + 文件分区的关联文件夹（只监听存在的目录）。
-    private func refreshWatchedFolders() {
+    func refreshWatchedFolders() {
         let fm = FileManager.default
         var paths = Set<String>()
         for zone in model.document.zones {
@@ -389,6 +430,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         folderWatcher?.stop()
+        desktopCollectWatcher?.stop()
+        desktopCollectRetry?.cancel()
         modelObservation = nil
     }
 
@@ -490,6 +533,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
             screenID: placement.screenID,
             backingFolderPath: backingFolderPath
         )
+        fillZoneGlassValues() // 新分区：通透自然的玻璃
         syncAllWindows()
     }
 
@@ -953,6 +997,12 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
 
     private var keyHandlers: [UUID: (NSEvent) -> Bool] = [:]
     private var keyMonitor: Any?
+
+    /// 把这个分区的窗口提到其它分区前面（弹出外观面板前用：面板挂在分区窗口上，
+    /// 不提前的话旁边的分区会盖住面板）。只改分区之间的前后，不改层级。
+    func bringZoneToFront(_ zoneID: UUID) {
+        windows[zoneID]?.orderFrontRegardless()
+    }
 
     func setKeyHandler(zoneID: UUID, _ handler: ((NSEvent) -> Bool)?) {
         keyHandlers[zoneID] = handler
@@ -1680,7 +1730,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
 
     // MARK: - 新建分区的默认几何
 
-    private func placementForNewZone() -> (frame: ZoneFrame, screenID: String) {
+    func placementForNewZone() -> (frame: ZoneFrame, screenID: String) {
         let primary = NSScreen.screens.first(where: { $0.dshDescriptor.isPrimary }) ?? NSScreen.main
         let visible = primary?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1280, height: 800)
         let size = CGSize(width: 420, height: 300)
@@ -1715,7 +1765,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    private func promptForName(title: String, message: String, defaultText: String) -> String? {
+    func promptForName(title: String, message: String, defaultText: String) -> String? {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = title

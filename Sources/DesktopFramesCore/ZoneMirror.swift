@@ -36,10 +36,19 @@ public struct ZoneMirror: Sendable {
     }
 
     /// 由分区列表算出入口文件夹应有的样子（纯计算，便于测试）。同名分区自动编号。
-    public static func plan(for zones: [Zone]) -> [Entry] {
+    public static func plan(for zones: [Zone], root: URL? = nil) -> [Entry] {
         var used = Set<String>()
+        // 下载分区的真实文件夹本来就在入口文件夹里：不再给它建链接，名字也让出来
+        let rootPath = root.map { $0.standardizedFileURL.path }
+        func isInRoot(_ zone: Zone) -> Bool {
+            zone.liveFolder && rootPath != nil
+                && zone.backingFolderURL?.deletingLastPathComponent().standardizedFileURL.path == rootPath
+        }
+        for zone in zones where isInRoot(zone) {
+            if let name = zone.backingFolderURL?.lastPathComponent { used.insert(name.lowercased()) }
+        }
         var result: [Entry] = []
-        for zone in zones {
+        for zone in zones where !isInRoot(zone) {
             let name = uniqueName(sanitize(zone.name), used: &used)
             if zone.kind == .folder {
                 guard let folder = zone.backingFolderURL else { continue }
@@ -71,18 +80,61 @@ public struct ZoneMirror: Sendable {
         return name
     }
 
+    /// 准备好入口文件夹本身：不存在就建、空的就打上 Tuck 标记。
+    /// 返回 false = 不能用（被换成了文件 / 链接，或是用户自己的、里面有东西的同名文件夹）。
+    @discardableResult
+    public func prepareRoot() -> Bool {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: root.path) && !Self.isSymlink(root.path) {
+            guard (try? fm.createDirectory(at: root, withIntermediateDirectories: true)) != nil else { return false }
+        }
+        guard Self.isRealDirectory(root.path) else { return false } // 被换成了文件 / 链接：不碰
+        if !Self.hasMark(root.path) {
+            // 已经有个同名文件夹、不是 Tuck 建的：空的才接管，里面有东西就整个不动
+            guard ((try? fm.contentsOfDirectory(atPath: root.path)) ?? ["?"]).isEmpty else { return false }
+            Self.setMark(root)
+        }
+        return true
+    }
+
+    /// 在入口文件夹里建「下载分区」用的真实文件夹（不打 Tuck 标记：它装的是用户的文件，Tuck 永远不删它）。
+    /// 同名的已经有了：是普通文件夹就直接用；被占用（是文件 / 链接）就换个编号。返回建好的位置。
+    public func makeDownloadFolder(named raw: String) -> URL? {
+        guard prepareRoot() else { return nil }
+        let base = Self.sanitize(raw)
+        var name = base
+        var n = 2
+        while true {
+            let url = root.appendingPathComponent(name, isDirectory: true)
+            let path = url.path
+            if Self.isRealDirectory(path) && !Self.hasMark(path) { return url } // 用户已有的同名文件夹：直接用
+            // Tuck 给同名普通分区建的入口子文件夹：里面只有 Tuck 的链接（或空的）就接过来用——
+            // 删掉这些链接（删链接不会动原文件）、去掉 Tuck 标记，从此它是装用户文件的普通文件夹
+            if Self.isRealDirectory(path) && Self.hasMark(path) {
+                let contents = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? ["?"]
+                let onlyTuckLinks = contents.allSatisfy { name in
+                    let p = (path as NSString).appendingPathComponent(name)
+                    return Self.isSymlink(p) && Self.hasMark(p)
+                }
+                if onlyTuckLinks {
+                    Self.removeLinks(in: path, keeping: [:])
+                    removexattr(path, Self.markName, XATTR_NOFOLLOW)
+                    return url
+                }
+            }
+            if !Self.isSymlink(path) && !FileManager.default.fileExists(atPath: path) {
+                return mkdir(path, 0o755) == 0 ? url : nil
+            }
+            name = "\(base) \(n)"
+            n += 1
+            if n > 99 { return nil }
+        }
+    }
+
     /// 让磁盘上的入口文件夹和 plan 一致。出错的单项跳过（下次再来），不抛错、不弹框。
     public func sync(_ plan: [Entry]) {
         let fm = FileManager.default
-        if !fm.fileExists(atPath: root.path) && !Self.isSymlink(root.path) {
-            guard (try? fm.createDirectory(at: root, withIntermediateDirectories: true)) != nil else { return }
-        }
-        guard Self.isRealDirectory(root.path) else { return } // 被换成了文件 / 链接：不碰
-        if !Self.hasMark(root.path) {
-            // 已经有个同名文件夹、不是 Tuck 建的：空的才接管，里面有东西就整个不动
-            guard ((try? fm.contentsOfDirectory(atPath: root.path)) ?? ["?"]).isEmpty else { return }
-            Self.setMark(root)
-        }
+        guard prepareRoot() else { return }
 
         let wanted = Dictionary(plan.map { ($0.name.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
         // 1) 清掉不再需要的顶层项（只动 Tuck 的东西）

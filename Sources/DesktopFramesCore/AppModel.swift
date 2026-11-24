@@ -79,15 +79,22 @@ public final class AppModel: ObservableObject {
         name: String,
         frame: ZoneFrame,
         screenID: String,
-        backingFolderPath: String?
+        backingFolderPath: String?,
+        liveFolder: Bool = false
     ) -> Zone {
-        let zone = Zone(
+        var zone = Zone(
             name: name,
             kind: kind,
             frame: frame,
             screenID: screenID,
-            backingFolderPath: backingFolderPath
+            backingFolderPath: backingFolderPath,
+            liveFolder: liveFolder && kind == .folder && backingFolderPath != nil
         )
+        if zone.liveFolder {
+            // 下载分区默认最新下载的排最前（和访达「下载」文件夹按添加日期一样）
+            zone.sortOrder = .dateAdded
+            zone.viewMode = .icon
+        }
         document.zones.append(zone)
         persist()
         return zone
@@ -128,6 +135,44 @@ public final class AppModel: ObservableObject {
         document.zones[i].appearance.tint = tint
         document.zones[i].updatedAt = Date()
         persist()
+    }
+
+    /// 分区自己的玻璃质感覆盖项。传 nil = 恢复跟随默认。
+    public enum GlassOverride: Sendable {
+        case style, edge, refraction
+    }
+
+    /// 设置（或清除）分区自己的玻璃质感 / 边缘光效 / 折射。值没变就不写盘。
+    public func setGlassOverride(zoneID: UUID, _ which: GlassOverride, value: String?) {
+        guard let i = index(of: zoneID) else { return }
+        var appearance = document.zones[i].appearance
+        switch which {
+        case .style: appearance.glassStyle = value
+        case .edge: appearance.glassEdge = value
+        case .refraction: appearance.glassRefraction = value
+        }
+        guard appearance != document.zones[i].appearance else { return }
+        document.zones[i].appearance = appearance
+        document.zones[i].updatedAt = Date()
+        persist()
+    }
+
+    /// 菜单栏改了总的玻璃质感：所有分区这一项都改成跟着它（清掉各分区单独选的）。
+    public func clearGlassOverrides(_ which: GlassOverride) {
+        var changed = false
+        for i in document.zones.indices {
+            var appearance = document.zones[i].appearance
+            switch which {
+            case .style: appearance.glassStyle = nil
+            case .edge: appearance.glassEdge = nil
+            case .refraction: appearance.glassRefraction = nil
+            }
+            if appearance != document.zones[i].appearance {
+                document.zones[i].appearance = appearance
+                changed = true
+            }
+        }
+        if changed { persist() }
     }
 
     /// 切换分区内容显示方式（列表 / 图标）。
@@ -316,6 +361,27 @@ public final class AppModel: ObservableObject {
         return removed
     }
 
+    /// 下载分区：把关联文件夹里现有的项目补成入口（已有的不动，顺序不变）。
+    /// `entries` 由 App 层列出并已滤掉下载中的临时文件和隐藏文件。返回新增几个。
+    @discardableResult
+    public func syncLiveFolder(zoneID: UUID, entries: [(url: URL, isDirectory: Bool)]) -> Int {
+        guard let i = index(of: zoneID), document.zones[i].liveFolder else { return 0 }
+        var present = Set(document.zones[i].items.map { $0.url.standardizedFileURL.path })
+        var added = 0
+        for entry in entries {
+            let path = entry.url.standardizedFileURL.path
+            guard !present.contains(path) else { continue }
+            present.insert(path)
+            document.zones[i].items.append(ZoneItem(url: entry.url, kind: entry.isDirectory ? .folder : .file))
+            added += 1
+        }
+        if added > 0 {
+            document.zones[i].updatedAt = Date()
+            persist()
+        }
+        return added
+    }
+
     // MARK: - 撤销记录
 
     public var undoBatch: [MoveUndoRecord] {
@@ -342,8 +408,10 @@ public final class AppModel: ObservableObject {
             guard let backing = zone.backingFolderURL else { continue }
             let backingStandard = backing.standardizedFileURL
             guard backingStandard != desk else { continue } // 框就是桌面，无需归位
+            // 下载分区：文件本来就在这个文件夹（浏览器下载进来的），只有从别处拖进来的才归位
             for item in zone.items
-            where item.url.deletingLastPathComponent().standardizedFileURL == backingStandard {
+            where item.url.deletingLastPathComponent().standardizedFileURL == backingStandard
+                && (!zone.liveFolder || item.movedFrom != nil) {
                 result.append(MovedItemCandidate(zoneID: zone.id, item: item))
             }
         }

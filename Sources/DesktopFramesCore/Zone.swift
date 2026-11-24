@@ -64,11 +64,20 @@ public struct ZoneAppearance: Codable, Equatable, Sendable {
     public var tint: String
     public var opacity: Double
     public var collapsed: Bool
+    /// 这个分区自己的玻璃质感 / 边缘光效 / 折射（存原始字符串，取值见 App 层的 GlassStyle / GlassEdge / GlassRefraction）。
+    /// nil = 跟随菜单栏里的默认值（默认值改了，没单独设过的分区一起变）。旧存档没有这几项，读出来就是 nil。
+    public var glassStyle: String?
+    public var glassEdge: String?
+    public var glassRefraction: String?
 
-    public init(tint: String = "white", opacity: Double = 0.9, collapsed: Bool = false) {
+    public init(tint: String = "white", opacity: Double = 0.9, collapsed: Bool = false,
+                glassStyle: String? = nil, glassEdge: String? = nil, glassRefraction: String? = nil) {
         self.tint = tint
         self.opacity = opacity
         self.collapsed = collapsed
+        self.glassStyle = glassStyle
+        self.glassEdge = glassEdge
+        self.glassRefraction = glassRefraction
     }
 }
 
@@ -161,6 +170,10 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
     /// 反过来排（名称 Z→A、日期旧的在前、小的在前）。
     public var sortReversed: Bool
     public var items: [ZoneItem]
+    /// 「下载分区」：文件分区里关联文件夹的内容**自动**出现在分区里（浏览器下载到这个文件夹就直接进分区）。
+    /// 这些自动出现的入口不写进布局（每次启动从文件夹重新列出），只保存从别处拖进来、真实移动过的项目
+    /// （带 movedFrom，退出归位要用）。这样旧版本 Tuck 读到这个布局，也不会把下载的文件“归位”到桌面上。
+    public var liveFolder: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -179,6 +192,7 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         sortOrder: ZoneSortOrder = .manual,
         sortReversed: Bool = false,
         items: [ZoneItem] = [],
+        liveFolder: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -196,13 +210,14 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         self.sortOrder = sortOrder
         self.sortReversed = sortReversed
         self.items = items
+        self.liveFolder = liveFolder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, kind, frame, screenID, appearance, tabs
-        case backingFolderBookmark, backingFolderPath, locked, viewMode, sortOrder, sortReversed, items, createdAt, updatedAt
+        case backingFolderBookmark, backingFolderPath, locked, viewMode, sortOrder, sortReversed, items, liveFolder, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -223,6 +238,7 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         sortReversed = (try? c.decodeIfPresent(Bool.self, forKey: .sortReversed)) ?? false
         // 逐条容错：某一条损坏 / 不是本地文件 URL 时只丢掉这一条，不让整个布局被判为损坏。
         items = (try c.decodeIfPresent([LossyItem].self, forKey: .items) ?? []).compactMap(\.value)
+        liveFolder = (try? c.decodeIfPresent(Bool.self, forKey: .liveFolder)) ?? false
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
@@ -242,7 +258,9 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         try c.encode(viewMode, forKey: .viewMode)
         try c.encode(sortOrder, forKey: .sortOrder)
         try c.encode(sortReversed, forKey: .sortReversed)
-        try c.encode(items, forKey: .items)
+        // 下载分区：自动列出的入口不落盘（见 liveFolder 的说明），只留真实移动进来的
+        try c.encode(liveFolder ? items.filter { $0.movedFrom != nil } : items, forKey: .items)
+        if liveFolder { try c.encode(true, forKey: .liveFolder) }
         try c.encode(createdAt, forKey: .createdAt)
         try c.encode(updatedAt, forKey: .updatedAt)
     }
