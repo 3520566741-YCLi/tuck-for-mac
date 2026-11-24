@@ -36,15 +36,15 @@ public enum FileOperationError: Error, LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case .sourceMissing:
-            return "要移动的项目已不存在。"
+            return L("要移动的项目已不存在。", "The item to move no longer exists.")
         case .folderMissing:
-            return "分区关联的文件夹不存在，请重新创建分区或选择文件夹。"
+            return L("分区关联的文件夹不存在，请重新创建分区或选择文件夹。", "The zone's folder doesn't exist. Create the zone again or pick a folder.")
         case .itemGone(let url):
-            return "“\(url.lastPathComponent)”已不在目标位置（可能被移动或删除），无法撤销。"
+            return L("“\(url.lastPathComponent)”已不在目标位置（可能被移动或删除），无法撤销。", "“\(url.lastPathComponent)” is no longer where it was moved to (maybe moved or deleted), so it can't be undone.")
         case .occupied(let url):
-            return "原位置已有同名项目“\(url.lastPathComponent)”，为避免覆盖，未执行撤销。"
+            return L("原位置已有同名项目“\(url.lastPathComponent)”，为避免覆盖，未执行撤销。", "Something named “\(url.lastPathComponent)” is already in the original spot. To avoid overwriting it, nothing was undone.")
         case .cancelled:
-            return "已取消，原文件保持不变。"
+            return L("已取消，原文件保持不变。", "Cancelled. The original files are unchanged.")
         case .underlying(let message):
             return message
         }
@@ -125,7 +125,7 @@ public struct FileOperationService {
                 try fileManager.trashItem(at: destination, resultingItemURL: &resulting)
                 trashed = resulting as URL?
             } catch {
-                throw FileOperationError.underlying("无法替换“\(destination.lastPathComponent)”：\(error.localizedDescription)")
+                throw FileOperationError.underlying(L("无法替换“\(destination.lastPathComponent)”：\(error.localizedDescription)", "Couldn't replace “\(destination.lastPathComponent)”: \(error.localizedDescription)"))
             }
         }
 
@@ -161,7 +161,7 @@ public struct FileOperationService {
         }
         let source = Self.canonical(item), target = Self.canonical(folder)
         if target == source || target.hasPrefix(source + "/") {
-            throw FileOperationError.underlying("不能把“\(item.lastPathComponent)”复制到它自己里面。")
+            throw FileOperationError.underlying(L("不能把“\(item.lastPathComponent)”复制到它自己里面。", "Can't copy “\(item.lastPathComponent)” into itself."))
         }
 
         var destination = folder.appendingPathComponent(item.lastPathComponent)
@@ -200,7 +200,7 @@ public struct FileOperationService {
                 trashed = resulting as URL?
             } catch {
                 Self.removePartial(temp)
-                throw FileOperationError.underlying("无法替换“\(destination.lastPathComponent)”：\(error.localizedDescription)")
+                throw FileOperationError.underlying(L("无法替换“\(destination.lastPathComponent)”：\(error.localizedDescription)", "Couldn't replace “\(destination.lastPathComponent)”: \(error.localizedDescription)"))
             }
         }
         if renamex_np(temp.path, destination.path, UInt32(RENAME_EXCL)) != 0 {
@@ -209,7 +209,7 @@ public struct FileOperationService {
             if let trashed, !fileManager.fileExists(atPath: destination.path) {
                 try? fileManager.moveItem(at: trashed, to: destination)
             }
-            throw FileOperationError.underlying("复制失败：\(reason)")
+            throw FileOperationError.underlying(L("复制失败：\(reason)", "Copy failed: \(reason)"))
         }
         Self.applyMetadata(from: item.path, to: destination.path)
         return (.moved(destination: destination), trashed)
@@ -267,6 +267,62 @@ public struct FileOperationService {
         return .moved(destination: original)
     }
 
+    /// 访达“复制”（⌘D）的名字：`名字 副本.扩展名`，再有就 `名字 副本 2.扩展名` …
+    /// 已经是“… 副本”的再复制，接着往后编号（不会出现“副本 副本”）。
+    public func duplicateDestination(for item: URL, copyWord: String = L("副本", "copy")) -> URL {
+        let folder = item.deletingLastPathComponent()
+        let isDirectory = (try? item.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])).map { ($0.isDirectory ?? false) && !($0.isPackage ?? false) } ?? false
+        // 文件夹名字里的点不算扩展名（“v1.2 资料”复制成“v1.2 资料 副本”）
+        let ext = isDirectory ? "" : item.pathExtension
+        var base = isDirectory ? item.lastPathComponent : item.deletingPathExtension().lastPathComponent
+        let suffix = " " + copyWord
+        if let range = base.range(of: suffix + #"( \d+)?$"#, options: .regularExpression) {
+            base = String(base[..<range.lowerBound])
+        }
+        func name(_ n: Int) -> String {
+            let stem = n == 1 ? base + suffix : "\(base)\(suffix) \(n)"
+            return ext.isEmpty ? stem : "\(stem).\(ext)"
+        }
+        var n = 1
+        while true {
+            let candidate = folder.appendingPathComponent(name(n), isDirectory: isDirectory)
+            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+            n += 1
+        }
+    }
+
+    /// 把 item 复制成 destination（目标必须不存在，绝不覆盖）：先复制到同目录的隐藏临时名，
+    /// 完成后原子改名；中途失败 / 取消只删临时副本。用于“复制”（⌘D）。
+    public func duplicate(item: URL, to destination: URL, progress: TransferProgress? = nil) throws -> URL {
+        guard fileManager.fileExists(atPath: item.path) else { throw FileOperationError.sourceMissing }
+        let folder = destination.deletingLastPathComponent()
+        if fileManager.fileExists(atPath: destination.path) { throw FileOperationError.occupied(destination) }
+        let temp = folder.appendingPathComponent("\(Self.partialPrefix)\(UUID().uuidString)")
+        PartialJournal.add(temp)
+        defer { PartialJournal.remove(temp) }
+        do {
+            try copyWithProgress(from: item, to: temp, progress: progress)
+        } catch {
+            Self.removePartial(temp)
+            throw error
+        }
+        if progress?.isCancelled == true {
+            Self.removePartial(temp)
+            throw FileOperationError.cancelled
+        }
+        if renamex_np(temp.path, destination.path, UInt32(RENAME_EXCL)) != 0 {
+            let reason = String(cString: strerror(errno))
+            Self.removePartial(temp)
+            throw FileOperationError.underlying(L("复制失败：\(reason)", "Copy failed: \(reason)"))
+        }
+        Self.applyMetadata(from: item.path, to: destination.path)
+        // 原件是被 Tuck 藏起来的桌面图标：副本不能带着“隐藏”和 Tuck 标记（否则副本在访达里看不见）
+        if DesktopHider.hasTuckMark(destination) {
+            DesktopHider.setHidden(false, at: destination)
+        }
+        return destination
+    }
+
     /// 为“保留两者”生成不冲突的名字：`名字 2.扩展名`、`名字 3.扩展名` …（扩展名可无）。
     public func uniqueDestination(for item: URL, in folder: URL) -> URL {
         let base = item.deletingPathExtension().lastPathComponent
@@ -298,7 +354,7 @@ public struct FileOperationService {
             try fileManager.moveItem(at: from, to: to) // 同卷：原子改名，瞬间完成
         } catch {
             guard Self.isCrossDevice(error) else {
-                throw FileOperationError.underlying("移动“\(from.lastPathComponent)”失败：\(error.localizedDescription)")
+                throw FileOperationError.underlying(L("移动“\(from.lastPathComponent)”失败：\(error.localizedDescription)", "Couldn't move “\(from.lastPathComponent)”: \(error.localizedDescription)"))
             }
             try crossVolumeMove(from: from, to: to, progress: progress)
         }
@@ -310,12 +366,12 @@ public struct FileOperationService {
     /// 3. 最后才把源文件移到废纸篓（失败就两份都保留并报错）。
     private func crossVolumeMove(from: URL, to: URL, progress: TransferProgress?) throws {
         if fileManager.fileExists(atPath: to.path) {
-            throw FileOperationError.underlying("目标位置已有“\(to.lastPathComponent)”，未执行跨卷移动。")
+            throw FileOperationError.underlying(L("目标位置已有“\(to.lastPathComponent)”，未执行跨卷移动。", "“\(to.lastPathComponent)” already exists at the destination, so it wasn't moved across drives."))
         }
         // 源所在的盘没有废纸篓（网络盘、部分 U 盘）：移完没法把原文件放进废纸篓，干脆不做，提前说明
         if (try? fileManager.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: from, create: true)) == nil {
             throw FileOperationError.underlying(
-                "“\(from.lastPathComponent)”所在的盘不支持废纸篓。为避免永久删除原文件，Tuck 不跨盘移动它，请在访达里复制。"
+                L("“\(from.lastPathComponent)”所在的盘不支持废纸篓。为避免永久删除原文件，Tuck 不跨盘移动它，请在访达里复制。", "The drive holding “\(from.lastPathComponent)” has no Trash. To avoid deleting the original for good, Tuck won't move it across drives; copy it in Finder instead.")
             )
         }
         // 临时名只用前缀 + UUID（不带原名，避免长文件名超出系统上限）；先登记，崩溃后下次启动也能清掉
@@ -336,7 +392,7 @@ public struct FileOperationService {
         if renamex_np(temp.path, to.path, UInt32(RENAME_EXCL)) != 0 {
             let reason = String(cString: strerror(errno))
             Self.removePartial(temp)
-            throw FileOperationError.underlying("跨卷移动失败：\(reason)")
+            throw FileOperationError.underlying(L("跨卷移动失败：\(reason)", "Moving across drives failed: \(reason)"))
         }
         // 权限 / 锁定标记等最后再补（复制过程中保持可写，取消时才删得掉临时副本）
         Self.applyMetadata(from: from.path, to: to.path)
@@ -344,7 +400,7 @@ public struct FileOperationService {
             try fileManager.trashItem(at: from, resultingItemURL: nil)
         } catch {
             throw FileOperationError.underlying(
-                "已复制到“\(to.path)”，但原文件未能移到废纸篓（两份都保留）：\(error.localizedDescription)"
+                L("已复制到“\(to.path)”，但原文件未能移到废纸篓（两份都保留）：\(error.localizedDescription)", "Copied to “\(to.path)”, but the original couldn't go to the Trash (both copies kept): \(error.localizedDescription)")
             )
         }
     }
@@ -361,10 +417,10 @@ public struct FileOperationService {
     private func copyNode(from: String, to: String, counter: CopyCounter) throws {
         if counter.progress?.isCancelled == true { throw FileOperationError.cancelled }
         var st = stat()
-        guard lstat(from, &st) == 0 else { throw posixError("读取") }
+        guard lstat(from, &st) == 0 else { throw posixError(L("读取", "read")) }
         switch st.st_mode & S_IFMT {
         case S_IFDIR:
-            guard mkdir(to, 0o700) == 0 else { throw posixError("创建文件夹") }
+            guard mkdir(to, 0o700) == 0 else { throw posixError(L("创建文件夹", "create folder")) }
             let entries = try fileManager.contentsOfDirectory(atPath: from)
             for name in entries {
                 try copyNode(from: from + "/" + name, to: to + "/" + name, counter: counter)
@@ -372,19 +428,19 @@ public struct FileOperationService {
             _ = copyfile(from, to, nil, copyfile_flags_t(COPYFILE_XATTR)) // 扩展属性先复制；权限等改名后再补
         case S_IFREG:
             try copyFileData(from: from, to: to, counter: counter)
-            guard copyfile(from, to, nil, copyfile_flags_t(COPYFILE_XATTR)) == 0 else { throw posixError("复制属性") }
+            guard copyfile(from, to, nil, copyfile_flags_t(COPYFILE_XATTR)) == 0 else { throw posixError(L("复制属性", "copy attributes")) }
         default:
             // 符号链接等特殊项：交给系统按原样复制（不跟随链接）
-            guard copyfile(from, to, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_NOFOLLOW)) == 0 else { throw posixError("复制") }
+            guard copyfile(from, to, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_NOFOLLOW)) == 0 else { throw posixError(L("复制", "copy")) }
         }
     }
 
     private func copyFileData(from: String, to: String, counter: CopyCounter) throws {
         let input = open(from, O_RDONLY | O_NOFOLLOW)
-        guard input >= 0 else { throw posixError("打开") }
+        guard input >= 0 else { throw posixError(L("打开", "open")) }
         defer { close(input) }
         let output = open(to, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-        guard output >= 0 else { throw posixError("创建") }
+        guard output >= 0 else { throw posixError(L("创建", "create")) }
         defer { close(output) }
         let chunk = 8 << 20
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: chunk, alignment: 16)
@@ -392,21 +448,21 @@ public struct FileOperationService {
         while true {
             if counter.progress?.isCancelled == true { throw FileOperationError.cancelled }
             let n = read(input, buffer, chunk)
-            if n < 0 { throw posixError("读取") }
+            if n < 0 { throw posixError(L("读取", "read")) }
             if n == 0 { break }
             var written = 0
             while written < n {
                 let w = write(output, buffer + written, n - written)
-                if w < 0 { throw posixError("写入") }
+                if w < 0 { throw posixError(L("写入", "write")) }
                 written += w
             }
             counter.add(Int64(n))
         }
-        guard fsync(output) == 0 else { throw posixError("写盘") } // 确认真的写到了目标盘上
+        guard fsync(output) == 0 else { throw posixError(L("写盘", "flush to disk")) } // 确认真的写到了目标盘上
     }
 
     private func posixError(_ action: String) -> FileOperationError {
-        .underlying("跨卷复制失败（\(action)）：\(String(cString: strerror(errno)))")
+        .underlying(L("跨卷复制失败（\(action)）：\(String(cString: strerror(errno)))", "Copying across drives failed (\(action)): \(String(cString: strerror(errno)))"))
     }
 
     private final class CopyCounter {

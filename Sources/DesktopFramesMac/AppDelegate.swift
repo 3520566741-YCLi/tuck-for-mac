@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var loadNoticeShown = false
     private var peekHotKey: PeekHotKey?
     private var glassMenuItems: [NSMenuItem] = []
+    private var edgeMenuItems: [NSMenuItem] = []
+    private var refractionMenuItems: [NSMenuItem] = []
+    private var captureMenuItem: NSMenuItem?
     private var termSource: DispatchSourceSignal?
 
     /// 已在运行时又从访达 / 启动台打开：系统发来“重新打开”，弹出菜单栏菜单回应。
@@ -24,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.minimumBackupInterval = 600 // 备份最多每 10 分钟一份，避免好备份被很快轮换掉
         let manager = ZoneWindowManager(store: store)
         self.manager = manager
+        // 分区里的文件右键菜单要列出系统“服务 / 快速操作”（和访达一样）：声明我们能往外送文件
+        NSApp.registerServicesMenuSendTypes([.fileURL, FinderItemNSView.legacyFilenames], returnTypes: [])
 
         // 菜单栏图标
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -69,14 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 启动提示（损坏恢复 / 布局清洗）
         if let notice = manager.model.notice, !loadNoticeShown {
             loadNoticeShown = true
-            manager.inform(title: "布局已重置", text: notice)
+            manager.inform(title: L("布局已重置", "Layout reset"), text: notice)
         }
         // 上次退出自动归位的报告（如“已把 N 项放回桌面原位置”）
         if let notice = manager.consumePendingNotice() {
-            manager.inform(title: "上次退出时的提示", text: notice)
+            manager.inform(title: L("上次退出时的提示", "From the last time Tuck quit"), text: notice)
         }
         if let report = manager.consumeLastRestoreReport() {
-            manager.inform(title: "已放回桌面", text: report)
+            manager.inform(title: L("已放回桌面", "Put back on the desktop"), text: report)
         }
     }
 
@@ -112,6 +117,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 菜单栏：切换玻璃边缘光效。
+    @objc private func selectGlassEdge(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let edge = GlassEdge(rawValue: raw) else { return }
+        GlassSettings.shared.edge = edge
+        for item in edgeMenuItems {
+            item.state = (item.representedObject as? String) == raw ? .on : .off
+        }
+    }
+
+    /// 菜单栏：光随屏幕角度变化（没有角度传感器的 Mac 上打开也没影响，玻璃保持固定光）。
+    @objc private func toggleLidLight(_ sender: NSMenuItem) {
+        LidLight.shared.isEnabled.toggle()
+        sender.state = LidLight.shared.isEnabled ? .on : .off
+    }
+
+    /// 菜单栏：切换折射（边缘拉伸 / 光栅玻璃 / 关）。
+    @objc private func selectRefraction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let mode = GlassRefraction(rawValue: raw) else { return }
+        GlassSettings.shared.refraction = mode
+        for item in refractionMenuItems {
+            item.state = (item.representedObject as? String) == raw ? .on : .off
+        }
+        // 动态壁纸下没开截壁纸层：说明原因并一键打开，不让用户选了却什么都看不到
+        if mode != .off, WallpaperCapture.offerIfNeeded() {
+            captureMenuItem?.state = WallpaperCapture.isEnabled ? .on : .off
+        }
+    }
+
+    /// 菜单栏：动态壁纸也折射（只截壁纸层，要录屏权限；打开时才请求一次）。
+    @objc private func toggleCaptureWallpaper(_ sender: NSMenuItem) {
+        if !WallpaperCapture.isEnabled || !WallpaperCapture.hasPermission, WallpaperCapture.wallpaperNeedsCapture {
+            WallpaperCapture.offerIfNeeded() // 先说清楚要什么权限、截什么
+        } else {
+            WallpaperCapture.isEnabled.toggle()
+        }
+        sender.state = WallpaperCapture.isEnabled ? .on : .off
+    }
+
     /// 菜单栏：开机自启动开关。
     @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
         LaunchAtLogin.setEnabled(!LaunchAtLogin.isEnabled)
@@ -142,17 +185,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = NSMenu()
 
         // 新建分区
-        let createItem = NSMenuItem(title: "新建分区", action: nil, keyEquivalent: "")
+        let createItem = NSMenuItem(title: L("新建分区", "New Zone"), action: nil, keyEquivalent: "")
         let createMenu = NSMenu()
-        createMenu.addItem(makeItem("普通分区（只放入口，不动文件）…", #selector(ZoneWindowManager.newVirtualZone(_:)), manager))
-        createMenu.addItem(makeItem("应用分区…", #selector(ZoneWindowManager.newAppZone(_:)), manager))
+        createMenu.addItem(makeItem(L("普通分区（只放入口，不动文件）…", "Regular Zone (shortcuts only, files stay put)…"), #selector(ZoneWindowManager.newVirtualZone(_:)), manager))
+        createMenu.addItem(makeItem(L("应用分区…", "App Zone…"), #selector(ZoneWindowManager.newAppZone(_:)), manager))
         createMenu.addItem(.separator())
-        createMenu.addItem(makeItem("文件夹分区（拖入会真实移动文件）…", #selector(ZoneWindowManager.newFolderZone(_:)), manager))
+        createMenu.addItem(makeItem(L("文件夹分区（拖入会真实移动文件）…", "Folder Zone (dropped files really move)…"), #selector(ZoneWindowManager.newFolderZone(_:)), manager))
         createItem.submenu = createMenu
         root.addItem(createItem)
 
         // 玻璃质感（三选一，即时生效）
-        let glassItem = NSMenuItem(title: "玻璃质感", action: nil, keyEquivalent: "")
+        let glassItem = NSMenuItem(title: L("玻璃质感", "Glass Style"), action: nil, keyEquivalent: "")
         let glassMenu = NSMenu()
         glassMenuItems = GlassStyle.allCases.map { style in
             let item = NSMenuItem(title: style.title, action: #selector(selectGlassStyle(_:)), keyEquivalent: "")
@@ -162,25 +205,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             glassMenu.addItem(item)
             return item
         }
+        glassMenu.addItem(.separator())
+        let edgeHeader = NSMenuItem(title: L("边缘光效", "Edge Light"), action: nil, keyEquivalent: "")
+        edgeHeader.isEnabled = false
+        glassMenu.addItem(edgeHeader)
+        edgeMenuItems = GlassEdge.allCases.map { edge in
+            let item = NSMenuItem(title: edge.title, action: #selector(selectGlassEdge(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = edge.rawValue
+            item.state = GlassSettings.shared.edge == edge ? .on : .off
+            item.indentationLevel = 1
+            glassMenu.addItem(item)
+            return item
+        }
+        glassMenu.addItem(.separator())
+        let refractionHeader = NSMenuItem(title: L("折射", "Refraction"), action: nil, keyEquivalent: "")
+        refractionHeader.isEnabled = false
+        glassMenu.addItem(refractionHeader)
+        refractionMenuItems = GlassRefraction.allCases.map { mode in
+            let item = NSMenuItem(title: mode.title, action: #selector(selectRefraction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = GlassSettings.shared.refraction == mode ? .on : .off
+            item.indentationLevel = 1
+            glassMenu.addItem(item)
+            return item
+        }
+        let captureItem = NSMenuItem(title: L("动态壁纸也折射（只截壁纸层，需录屏权限）", "Refract dynamic wallpapers too (captures only the wallpaper layer; needs Screen Recording)"), action: #selector(toggleCaptureWallpaper(_:)), keyEquivalent: "")
+        captureItem.target = self
+        captureMenuItem = captureItem
+        captureItem.state = WallpaperCapture.isEnabled ? .on : .off
+        captureItem.indentationLevel = 1
+        glassMenu.addItem(captureItem)
+        glassMenu.addItem(.separator())
+        let lidItem = NSMenuItem(title: L("光随屏幕角度变化（推拉屏幕时高光会滑动）", "Light follows the lid angle (rim light slides as you tilt the screen)"), action: #selector(toggleLidLight(_:)), keyEquivalent: "")
+        lidItem.target = self
+        lidItem.state = LidLight.shared.isEnabled ? .on : .off
+        glassMenu.addItem(lidItem)
         glassItem.submenu = glassMenu
         root.addItem(glassItem)
 
         // 在桌面上隐藏已收纳的原图标（默认开）
-        let hideItem = NSMenuItem(title: "在桌面上隐藏已收纳的原图标", action: #selector(ZoneWindowManager.toggleHideOnDesktop(_:)), keyEquivalent: "")
+        let hideItem = NSMenuItem(title: L("在桌面上隐藏已收纳的原图标", "Hide Tucked Icons on the Desktop"), action: #selector(ZoneWindowManager.toggleHideOnDesktop(_:)), keyEquivalent: "")
         hideItem.target = manager
         hideItem.state = manager.isHideOnDesktopEnabled ? .on : .off
         manager.hideOnDesktopMenuItem = hideItem
         root.addItem(hideItem)
+        // 「Tuck 分区」入口文件夹：被隐藏的桌面文件在别的软件的打开 / 上传窗口里从这里找
+        let mirrorItem = NSMenuItem(title: L("在个人文件夹放「Tuck 分区」入口（上传文件时用）", "Keep a “Tuck Zones” folder in Home (for upload dialogs)"), action: #selector(ZoneWindowManager.toggleZoneMirror(_:)), keyEquivalent: "")
+        mirrorItem.target = manager
+        mirrorItem.state = manager.isZoneMirrorEnabled ? .on : .off
+        root.addItem(mirrorItem)
+        let openMirror = NSMenuItem(title: L("在访达中显示「Tuck 分区」", "Show “Tuck Zones” in Finder"), action: #selector(ZoneWindowManager.openZoneMirror(_:)), keyEquivalent: "")
+        openMirror.target = manager
+        openMirror.indentationLevel = 1
+        root.addItem(openMirror)
 
         // 偷看：分区临时浮到最上层
-        let peek = NSMenuItem(title: "偷看分区（临时浮到最上层）  \(PeekHotKey.display)", action: #selector(ZoneWindowManager.togglePeek(_:)), keyEquivalent: "")
+        let peek = NSMenuItem(title: L("偷看分区（临时浮到最上层）  \(PeekHotKey.display)", "Peek at Zones (float on top for now)  \(PeekHotKey.display)"), action: #selector(ZoneWindowManager.togglePeek(_:)), keyEquivalent: "")
         peek.target = manager
         manager.peekMenuItem = peek
         root.addItem(peek)
         root.addItem(.separator())
 
         // 备份恢复
-        let backupItem = NSMenuItem(title: "恢复备份", action: nil, keyEquivalent: "")
+        let backupItem = NSMenuItem(title: L("恢复备份", "Restore Backup"), action: nil, keyEquivalent: "")
         let backupMenu = NSMenu()
         backupMenu.autoenablesItems = false
         manager.configureBackupSubmenu(backupMenu)
@@ -189,14 +278,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 撤销上次真实移动（自动启用/禁用）
         // 不设快捷键：菜单打开时 ⌘Z 会被它接走并真实移动文件，容易误触
-        let undo = NSMenuItem(title: "撤销上次移动", action: #selector(ZoneWindowManager.undoLastMove(_:)), keyEquivalent: "")
+        let undo = NSMenuItem(title: L("撤销上次移动", "Undo Last Move"), action: #selector(ZoneWindowManager.undoLastMove(_:)), keyEquivalent: "")
         undo.target = manager
         manager.undoMenuItem = undo
         root.addItem(undo)
 
         // 安全网：任何收起的分区找不到/点不到时，从这里一键恢复
         let expandAll = NSMenuItem(
-            title: "展开全部收起的分区",
+            title: L("展开全部收起的分区", "Expand All Collapsed Zones"),
             action: #selector(ZoneWindowManager.expandAllCollapsedZones(_:)),
             keyEquivalent: ""
         )
@@ -204,13 +293,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         root.addItem(expandAll)
 
         // 清理失效入口（全局）
-        let purge = NSMenuItem(title: "清理失效入口…", action: #selector(ZoneWindowManager.purgeNowMenuAction(_:)), keyEquivalent: "")
+        let purge = NSMenuItem(title: L("清理失效入口…", "Clean Up Broken Shortcuts…"), action: #selector(ZoneWindowManager.purgeNowMenuAction(_:)), keyEquivalent: "")
         purge.target = manager
         root.addItem(purge)
 
         // 退出时自动归位开关（把拖入文件分区的文件放回桌面原位置）
         let restore = NSMenuItem(
-            title: "退出时自动把拖入的文件放回桌面原位置",
+            title: L("退出时自动把拖入的文件放回桌面原位置", "Put Dropped Files Back on the Desktop When Quitting"),
             action: #selector(ZoneWindowManager.toggleRestoreOnQuit(_:)),
             keyEquivalent: ""
         )
@@ -221,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 开机自启动（登录后自动恢复桌面分区）
         let autostart = NSMenuItem(
-            title: "登录时自动启动",
+            title: L("登录时自动启动", "Open at Login"),
             action: #selector(AppDelegate.toggleLaunchAtLogin(_:)),
             keyEquivalent: ""
         )
@@ -230,12 +319,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         root.addItem(autostart)
 
         // 关于（含构建时间，便于核对版本）
-        let about = NSMenuItem(title: "关于 \(AppInfo.name)…", action: #selector(ZoneWindowManager.showAbout(_:)), keyEquivalent: "")
+        let about = NSMenuItem(title: L("关于 \(AppInfo.name)…", "About \(AppInfo.name)…"), action: #selector(ZoneWindowManager.showAbout(_:)), keyEquivalent: "")
         about.target = manager
         root.addItem(about)
 
         root.addItem(.separator())
-        let quit = NSMenuItem(title: "退出 \(AppInfo.name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L("退出 \(AppInfo.name)", "Quit \(AppInfo.name)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         root.addItem(quit)
         return root

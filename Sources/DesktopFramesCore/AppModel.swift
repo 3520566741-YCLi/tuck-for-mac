@@ -60,7 +60,7 @@ public final class AppModel: ObservableObject {
             do {
                 try store.save(doc)
             } catch {
-                notice = (notice ?? "") + " 首次保存失败：\(error.localizedDescription)"
+                notice = (notice ?? "") + L(" 首次保存失败：\(error.localizedDescription)", " First save failed: \(error.localizedDescription)")
             }
         }
     }
@@ -136,6 +136,34 @@ public final class AppModel: ObservableObject {
         document.zones[i].viewMode = mode
         document.zones[i].updatedAt = Date()
         persist()
+    }
+
+    /// 设置自动排序方式（只改显示顺序，分区里保存的手动顺序不动，切回“无”就恢复）。
+    /// 换一种排序时“倒序”复位，和访达一样每种排序先用它自己的默认方向。
+    public func setSortOrder(zoneID: UUID, order: ZoneSortOrder) {
+        guard let i = index(of: zoneID) else { return }
+        guard document.zones[i].sortOrder != order else { return }
+        document.zones[i].sortOrder = order
+        document.zones[i].sortReversed = false
+        document.zones[i].updatedAt = Date()
+        persist()
+    }
+
+    /// 切换倒序。
+    public func setSortReversed(zoneID: UUID, reversed: Bool) {
+        guard let i = index(of: zoneID) else { return }
+        guard document.zones[i].sortReversed != reversed else { return }
+        document.zones[i].sortReversed = reversed
+        document.zones[i].updatedAt = Date()
+        persist()
+    }
+
+    /// 按某一项整理一次（访达的“整理方式”）：把手动顺序一次性排好，之后仍可手动拖动。
+    /// 只改分区里入口的顺序，不碰任何文件。keys 用于测试注入。
+    public func arrangeOnce(zoneID: UUID, by order: ZoneSortOrder, keys: ((ZoneItem) -> ZoneSortKeys)? = nil) {
+        guard let i = index(of: zoneID), order != .manual else { return }
+        let sorted = ZoneSorter.sorted(document.zones[i].items, by: order, keys: keys)
+        reorderItems(zoneID: zoneID, orderedIDs: sorted.map(\.id))
     }
 
     /// 折叠 / 展开分区（折叠时窗口只保留标题条；zone.frame 始终保存展开尺寸）。
@@ -222,6 +250,41 @@ public final class AppModel: ObservableObject {
             }
         }
         if changed { persist() }
+    }
+
+    /// 文件改名 / 换位置后：把所有分区里指向 old 的入口改指向 new（位置、顺序、其它信息都不变）。
+    /// - Returns: 改了几个入口。
+    @discardableResult
+    public func retargetEntries(from old: URL, to new: URL) -> Int {
+        let target = old.standardizedFileURL
+        var changed = 0
+        for i in document.zones.indices {
+            for j in document.zones[i].items.indices where document.zones[i].items[j].url.standardizedFileURL == target {
+                document.zones[i].items[j].url = new
+                document.zones[i].items[j].displayName = nil // 显示名跟着新文件名走
+                document.zones[i].updatedAt = Date()
+                changed += 1
+            }
+        }
+        if changed > 0 { persist() }
+        return changed
+    }
+
+    /// 在某个项目后面插入新条目（“复制”“制作替身”“压缩”的结果紧挨着原项目出现，和访达一样）。
+    /// after 为 nil 或已不在分区里时追加到末尾；同一 URL 已存在时跳过。
+    @discardableResult
+    public func insertItem(_ item: ZoneItem, after anchorID: UUID?, in zoneID: UUID) -> Bool {
+        guard let i = index(of: zoneID) else { return false }
+        let exists = document.zones[i].items.contains { $0.url.standardizedFileURL == item.url.standardizedFileURL }
+        guard !exists else { return false }
+        if let anchorID, let at = document.zones[i].items.firstIndex(where: { $0.id == anchorID }) {
+            document.zones[i].items.insert(item, at: at + 1)
+        } else {
+            document.zones[i].items.append(item)
+        }
+        document.zones[i].updatedAt = Date()
+        persist()
+        return true
     }
 
     /// 清理失效条目：文件已不在且其父目录仍存在（如被拖出/移动/删除）→ 移除该入口。
@@ -318,7 +381,7 @@ public final class AppModel: ObservableObject {
         do {
             try store.save(document)
         } catch {
-            notice = "保存布局失败：\(error.localizedDescription)"
+            notice = L("保存布局失败：\(error.localizedDescription)", "Couldn't save the layout: \(error.localizedDescription)")
         }
     }
 }

@@ -10,17 +10,20 @@ public struct MoveUndoRecord: Codable, Equatable, Sendable {
     public var performedAt: Date
     /// “替换”时被移到废纸篓的旧文件（撤销时放回 destination）。
     public var replacedTrashURL: URL?
+    /// 撤销后要把入口加回哪个分区（“移到废纸篓”时记录：普通 / 应用分区里的入口随文件一起拿回来）。
+    public var restoreZoneID: UUID?
 
-    public init(id: UUID = UUID(), source: URL, destination: URL, performedAt: Date = Date(), replacedTrashURL: URL? = nil) {
+    public init(id: UUID = UUID(), source: URL, destination: URL, performedAt: Date = Date(), replacedTrashURL: URL? = nil, restoreZoneID: UUID? = nil) {
         self.id = id
         self.source = source
         self.destination = destination
         self.performedAt = performedAt
         self.replacedTrashURL = replacedTrashURL
+        self.restoreZoneID = restoreZoneID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, source, destination, performedAt, replacedTrashURL
+        case id, source, destination, performedAt, replacedTrashURL, restoreZoneID
     }
 
     public init(from decoder: Decoder) throws {
@@ -33,6 +36,7 @@ public struct MoveUndoRecord: Codable, Equatable, Sendable {
            let url = URL(string: raw), url.isFileURL {
             replacedTrashURL = url
         }
+        restoreZoneID = try c.decodeIfPresent(UUID.self, forKey: .restoreZoneID)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -42,6 +46,7 @@ public struct MoveUndoRecord: Codable, Equatable, Sendable {
         try c.encode(destination.absoluteString, forKey: .destination)
         try c.encode(performedAt, forKey: .performedAt)
         try c.encodeIfPresent(replacedTrashURL?.absoluteString, forKey: .replacedTrashURL)
+        try c.encodeIfPresent(restoreZoneID, forKey: .restoreZoneID)
     }
 
     private static func decodeURL(from c: KeyedDecodingContainer<CodingKeys>, key: CodingKeys) throws -> URL {

@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "${0:A:h}/.."
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 IDENTITY="${SIGN_IDENTITY:--}"   # 没设就 ad-hoc 签名；有开发者证书可 export SIGN_IDENTITY="Apple Development: …"
 APP_NAME="Tuck"
@@ -43,14 +43,27 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${BUILD}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
   <key>LSUIElement</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Tuck asks Finder to open the Get Info window for items in your zones. 用于请访达打开分区里项目的“显示简介”窗口。</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
 
 # 先签内部的看门狗，再签整个 App
 codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$APP/Contents/MacOS/TuckWatchdog"
-codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$APP"
+# 开了 hardened runtime 的 App 要请访达打开“简介”窗口，必须声明 Apple Events 权限（系统仍会先问用户）
+ENT_DIR="$(mktemp -d)"; ENTITLEMENTS="$ENT_DIR/tuck.entitlements"
+cat > "$ENTITLEMENTS" <<ENT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.automation.apple-events</key><true/>
+</dict></plist>
+ENT
+codesign --force --options runtime --timestamp=none --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"
+rm -rf "$ENT_DIR"
 codesign --verify --strict "$APP"
 echo "Built $APP ($(du -sh "$APP" | cut -f1))"
 

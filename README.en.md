@@ -25,7 +25,7 @@
 
 ## Latest
 
-**v2.1.0** (first public release): Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, drag to reorder, crash watchdog. Every version is in the [release history](#-release-history) below; full notes in the [CHANGELOG](CHANGELOG.md).
+**v2.2.0** (2026-11-24): **more realistic liquid glass** (convex-bevel refraction with a thin bright rim, clear in the middle), Finder-style **auto sort** (name / kind / date / size), glass that **refracts** (edge stretch / fluted glass, dynamic wallpapers too), three new edge lights with a highlight that **follows the lid angle**, a **Finder-style context menu**, a “**Tuck Zones**” folder in Home (so upload dialogs can find tucked files), and an **English interface**. Every version is in the [release history](#-release-history) below; full notes in the [CHANGELOG](CHANGELOG.md).
 
 ## What it is
 
@@ -41,17 +41,20 @@ Picture a few **clear glass trays** on your desktop:
 | | Feature | In short |
 |---|---|---|
 | 🪟 | **Liquid Glass zones** | Native Liquid Glass (macOS 26+, frosted blur on older systems). Three looks: **A Clear / B Frosted / C Dark**. |
+| 🔍 | **Glass that refracts** | Bends the wallpaper behind it like real glass: **edge stretch** (default) or **fluted glass** (vertical ribs). Edge lights: Crystal / Prism / Slab; on a MacBook the highlight **follows the lid angle**. |
 | 💊 | **Collapse to a capsule** | Click the arrow by the title; the zone shrinks bottom-up into a glass capsule with a spring animation. |
 | 📁 | **Three zone types** | Virtual zones keep entries only · App zones hold favourite apps · Folder zones are backed by a real folder. |
 | 🫥 | **No duplicates** | Desktop files placed in a zone are hidden on the desktop and come back when removed or when Tuck quits. |
-| 🖱️ | **Works like Finder** | Select, double-click, Space for Quick Look, ⌘O / ⌘A / ⌘C; drop into folders or onto apps. |
+| 🖱️ | **Works like Finder** | Select, double-click, Space for Quick Look, ⌘O / ⌘A / ⌘C; drop into folders or onto apps. **Finder's context menu**: Open With, Get Info, Rename, Duplicate, Make Alias, Compress, Tags, Services; deleting only moves to the Trash and ⌘Z undoes it. |
+| 🗂️ | **“Tuck Zones” folder** | Links to the originals in your Home folder, zone by zone, so other apps' Open / Upload dialogs can find tucked files. |
 | 🔀 | **Drag to reorder** | Icons make room like a phone home screen; hover over a folder to drop in. |
+| 🔤 | **Auto sort** | Sort By name / kind / date / size, reversible, per zone; display order only, nothing is renamed or moved. |
 | 👀 | **Peek** | `⌃⌥D` lifts all zones above every window. |
 | 🪶 | **Featherweight** | 0% CPU at idle (wakes only on folder changes), about 22 MB of memory, zero dependencies, no network. |
 
 ## Gallery
 
-> Real screenshots on a Mac, with demo files. They show Tuck's English interface, which follows your system language and ships with the next release; v2.1.0 is Chinese only.
+> Real screenshots on a Mac, with demo files. They show Tuck's English interface, which follows your system language (since v2.2.0).
 
 #### Follows dark mode
 <img src="docs/images/en/hero-dark.jpg" width="860" alt="Night">
@@ -65,6 +68,16 @@ Picture a few **clear glass trays** on your desktop:
 | Expanded and capsules | Menu bar menu |
 |:---:|:---:|
 | <img src="docs/images/en/collapse.jpg" alt="Expanded and capsules"> | <img src="docs/images/en/menu.png" width="450" alt="Menu bar menu"> |
+
+#### Glass that refracts <sup>v2.2</sup>
+| Edge stretch (default) | Fluted glass |
+|:---:|:---:|
+| <img src="docs/images/en/refraction-edge.jpg" alt="Edge stretch"> | <img src="docs/images/en/refraction-fluted.jpg" alt="Fluted glass"> |
+
+#### Finder-style context menu · “Tuck Zones” folder <sup>v2.2</sup>
+| Context menu | Pick tucked files from “Tuck Zones” |
+| :---: | |
+| <img src="docs/images/en/tuck-zones-folder.jpg" alt="Tuck Zones folder"> | |
 
 ## Install
 
@@ -109,6 +122,16 @@ Tuck lives in the menu bar only; every setting is behind the grid icon. Opening 
 macOS 14 and later work; Liquid Glass needs macOS 26, older systems get the system frosted blur.
 </details>
 
+<details><summary><b>What permissions does it need? Does it watch my screen?</b></summary>
+
+**None by default**, and it never goes online. Only if you turn on “Refract dynamic wallpapers too” does it ask once for Screen Recording: macOS doesn't share dynamic / aerial wallpapers with apps, so Tuck captures only the wallpaper layer (never windows, desktop icons or files), in memory only, never saved. With a still-image wallpaper it isn't needed. Because Tuck has no paid developer signature, macOS may ask you to allow it again after each update.
+</details>
+
+<details><summary><b>What is the “Tuck Zones” folder in my Home folder?</b></summary>
+
+Desktop files tucked into a zone are hidden on the desktop, and that hiding applies to every app, so other apps' Open / Upload dialogs couldn't see them. “Tuck Zones” lists links to the originals, zone by zone; open it in an upload dialog to pick the original. Deleting a link never deletes the original. Turn it off with “Keep a ‘Tuck Zones’ folder in Home” in the menu bar menu.
+</details>
+
 <details><summary><b>Does it launch at login?</b></summary>
 
 Not by default. Turn on "Launch at Login" in the menu bar menu if you want it.
@@ -137,7 +160,8 @@ Product behaviour inspired by [DesktopFramesPlus](https://github.com/limbo666/De
 
 | Version | Date | What changed | Download |
 |---|---|---|---|
-| **v2.1.0** `latest` | 2026-11-08 | First public release: Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, crash watchdog · [details](CHANGELOG.md#v210--2026-11-08) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.1.0) |
+| **v2.2.0** `latest` | 2026-11-24 | More realistic liquid glass, auto sort, glass that refracts (edge stretch / fluted, dynamic wallpapers too), new edge lights + lid-angle highlight, Finder-style context menu, “Tuck Zones” folder, English interface · [details](CHANGELOG.md#v220--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.2.0) |
+| **v2.1.0** | 2026-11-08 | First public release: Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, crash watchdog · [details](CHANGELOG.md#v210--2026-11-08) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.1.0) |
 
 Every version stays on [Releases](https://github.com/3520566741-YCLi/tuck-for-mac/releases); each release page has the installer under **Assets**.
 

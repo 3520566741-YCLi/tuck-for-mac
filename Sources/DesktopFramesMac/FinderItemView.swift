@@ -32,6 +32,8 @@ struct FinderItemInteraction: NSViewRepresentable {
         var dragEnded: () -> Void
         /// 拖动中指针移动（屏幕坐标）：用来判断是否已经拖出了玻璃框。
         var dragMoved: (NSPoint) -> Void
+        /// 右键菜单里“服务 / 快速操作”要处理的文件（当前选中项）。
+        var serviceURLs: () -> [URL] = { [] }
     }
 
     /// 图标“正中间”的范围（相对本视图，0–1，原点在左下角）：停在这里一会儿 = 放进文件夹。
@@ -131,6 +133,19 @@ final class FinderItemNSView: NSView, NSDraggingSource {
     // ⌃ 点击 = 右键（和访达一样）
     override func menu(for event: NSEvent) -> NSMenu? { callbacks?.menu() }
 
+    // MARK: 系统“服务 / 快速操作”（右键菜单底部，和访达一样由系统自动列出）
+
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {
+        // 只往外送选中的文件，不接受服务写回内容（不会被服务改动分区）
+        if returnType == nil, let sendType, sendType == .fileURL || sendType == Self.legacyFilenames,
+           !(callbacks?.serviceURLs() ?? []).isEmpty {
+            return self
+        }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    static let legacyFilenames = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+
     // MARK: 拖出（NSDraggingSource）
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
@@ -210,6 +225,22 @@ final class FinderItemNSView: NSView, NSDraggingSource {
         guard !urls.isEmpty, let callbacks else { return false }
         return callbacks.performDrop(urls, sender.draggingSourceOperationMask)
     }
+}
+
+// 系统「服务」只在主线程调这两个方法，用 @preconcurrency 接上旧协议。
+extension FinderItemNSView: @preconcurrency NSServicesMenuRequestor {
+    func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        let urls = callbacks?.serviceURLs() ?? []
+        guard !urls.isEmpty else { return false }
+        pboard.clearContents()
+        var ok = pboard.writeObjects(urls.map { $0 as NSURL })
+        if types.contains(Self.legacyFilenames) {
+            ok = pboard.setPropertyList(urls.map(\.path), forType: Self.legacyFilenames) || ok
+        }
+        return ok
+    }
+
+    func readSelection(from pboard: NSPasteboard) -> Bool { false }
 }
 
 /// 用闭包当动作的菜单项（右键菜单用）。

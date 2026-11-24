@@ -78,8 +78,8 @@ public final class ZoneStore {
             data = try Data(contentsOf: layoutFile)
         } catch {
             pruningSuspended = true
-            let quarantine = quarantineCorruptFile(errorNote: "无法读取文件：\(error.localizedDescription)")
-            return .init(document: LayoutDocument(), recoveredFromCorruption: true, quarantinedFile: quarantine, notice: "布局文件无法读取，已隔离并保留原文件。")
+            let quarantine = quarantineCorruptFile(errorNote: L("无法读取文件：\(error.localizedDescription)", "Couldn't read the file: \(error.localizedDescription)"))
+            return .init(document: LayoutDocument(), recoveredFromCorruption: true, quarantinedFile: quarantine, notice: L("布局文件无法读取，已隔离并保留原文件。", "The layout file couldn't be read. It was set aside and kept as is."))
         }
 
         do {
@@ -95,16 +95,16 @@ public final class ZoneStore {
                     recoveredFromCorruption: false,
                     quarantinedFile: nil,
                     notice: copy == nil
-                        ? "布局由更新版本 (v\(doc.version)) 写出，本次从空布局开始，原文件已保留。"
-                        : "布局由更新版本 (v\(doc.version)) 写出，已存档为 \(copy?.lastPathComponent ?? "")，本次从空布局开始。"
+                        ? L("布局由更新版本 (v\(doc.version)) 写出，本次从空布局开始，原文件已保留。", "The layout was written by a newer version (v\(doc.version)). Starting from an empty layout this time; the original file is kept.")
+                        : L("布局由更新版本 (v\(doc.version)) 写出，已存档为 \(copy?.lastPathComponent ?? "")，本次从空布局开始。", "The layout was written by a newer version (v\(doc.version)) and archived as \(copy?.lastPathComponent ?? ""). Starting from an empty layout this time.")
                 )
             }
 
             return .init(document: doc, recoveredFromCorruption: false, quarantinedFile: nil, notice: nil)
         } catch {
             pruningSuspended = true
-            let quarantine = quarantineCorruptFile(errorNote: "JSON 解析失败：\(error.localizedDescription)")
-            return .init(document: LayoutDocument(), recoveredFromCorruption: true, quarantinedFile: quarantine, notice: "布局文件损坏，已隔离并保留原文件；可通过“恢复最近备份”找回。")
+            let quarantine = quarantineCorruptFile(errorNote: L("JSON 解析失败：\(error.localizedDescription)", "JSON parsing failed: \(error.localizedDescription)"))
+            return .init(document: LayoutDocument(), recoveredFromCorruption: true, quarantinedFile: quarantine, notice: L("布局文件损坏，已隔离并保留原文件；可通过“恢复最近备份”找回。", "The layout file is damaged. It was set aside and kept; use “Restore Backup” to get it back."))
         }
     }
 

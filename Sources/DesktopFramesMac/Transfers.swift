@@ -47,7 +47,7 @@ final class TransferCenter: ObservableObject {
     /// 用户点“取消”：正在跨盘复制的那一项立即停止并清掉未完成的临时副本，源文件完好；后面的项不再开始。
     func cancel() {
         token?.cancel()
-        if active != nil { active?.title = "正在取消…" }
+        if active != nil { active?.title = L("正在取消…", "Cancelling…") }
     }
 }
 

@@ -11,12 +11,14 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     let store: ZoneStore
     let model: AppModel
     private var windows: [UUID: NSWindow] = [:]
-    private let fileService = FileOperationService()
+    let fileService = FileOperationService()
     /// 正在进行的文件移动（后台执行，分区里显示进度、可取消）。
     let transfers = TransferCenter()
     /// 移动进行中用户要退出：等它取消 / 完成后再退出。
     private var quitWhenTransferEnds = false
     private var quickLookController: QuickLookController?
+    /// 上次写到「Tuck 分区」入口文件夹的内容（一样就不再碰磁盘）。
+    private var lastMirrorPlan: [ZoneMirror.Entry]?
     /// FSEvents 监听条目所在文件夹，有变化才清理失效入口（替代旧的定时轮询）。
     private var folderWatcher: FolderWatcher?
     private var modelObservation: AnyCancellable?
@@ -96,6 +98,105 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         }
         let result = hider.reconcile(wanted: wanted, tracked: registry.paths) { registry.update($0) } relocate: { registry.locate($0) } isOriginal: { registry.isOriginal($0) }
         registry.update(result)
+        syncZoneMirror()
+    }
+
+    /// 折射层要的输入：分区窗口位置、所在屏幕的壁纸和摆放方式。读不到壁纸（动态 / 平铺）就返回 nil。
+    func refractionSource(for zoneID: UUID) -> RefractionSource? {
+        guard let window = windows[zoneID], window.isVisible, let screen = window.screen ?? NSScreen.main else { return nil }
+        // 测试 / 截图用：DESKTOPFRAMES_WALLPAPER 指定一张图当壁纸（不改系统壁纸）
+        let override = ProcessInfo.processInfo.environment["DESKTOPFRAMES_WALLPAPER"].map { URL(fileURLWithPath: $0) }
+        let url = override ?? NSWorkspace.shared.desktopImageURL(for: screen)
+        // 系统动态壁纸（Sequoia / Tahoe 那种实时渲染的、航拍视频）时，系统只给一张占位图
+        // （DefaultDesktop.heic → /System/Library/Wallpapers/.default/…），和屏幕上真正显示的完全不是一张。
+        // 这时只有用户打开了「动态壁纸也折射」且给了录屏权限，才改为截壁纸层；否则不折射。
+        var isDir: ObjCBool = false
+        let usable = url.map { $0.isFileURL && (override != nil || !Self.isPlaceholderWallpaper($0))
+            && FileManager.default.fileExists(atPath: $0.path, isDirectory: &isDir) && !isDir.boolValue } ?? false
+        guard let url, usable else {
+            guard override == nil, WallpaperCapture.isEnabled, WallpaperCapture.hasPermission,
+                  let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            return RefractionSource(
+                frame: window.frame,
+                screen: ScreenInfo(frame: screen.frame, wallpaper: nil, scaling: .scaleAxesIndependently, allowClipping: true,
+                                   captureDisplay: CGDirectDisplayID(number.uint32Value)),
+                scale: screen.backingScaleFactor
+            )
+        }
+        let options = NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:]
+        let rawScaling = (options[.imageScaling] as? NSNumber)?.uintValue ?? NSImageScaling.scaleProportionallyUpOrDown.rawValue
+        let scaling = NSImageScaling(rawValue: rawScaling) ?? .scaleProportionallyUpOrDown
+        let clipping = (options[.allowClipping] as? NSNumber)?.boolValue ?? true
+        return RefractionSource(
+            frame: window.frame,
+            screen: ScreenInfo(frame: screen.frame, wallpaper: url, scaling: scaling, allowClipping: clipping),
+            scale: screen.backingScaleFactor
+        )
+    }
+
+    /// 系统给动态 / 航拍壁纸返回的占位图：解开链接后落在 /System/Library/Wallpapers/.default/ 或叫 DefaultDesktop。
+    nonisolated static func isPlaceholderWallpaper(_ url: URL) -> Bool {
+        let resolved = url.resolvingSymlinksInPath().path
+        return resolved.hasPrefix("/System/Library/Wallpapers/.default/")
+            || url.lastPathComponent == "DefaultDesktop.heic"
+            || resolved.hasPrefix("/System/Library/Wallpapers/") && resolved.contains("Aerial")
+    }
+
+    // MARK: - 「Tuck 分区」入口文件夹（让别的软件的打开 / 上传窗口也找得到被隐藏的桌面文件）
+
+    static let zoneMirrorEnabledKey = "ZoneMirrorEnabled"
+    static let zoneMirrorPathKey = "ZoneMirrorPath"
+    private static let mirrorQueue = DispatchQueue(label: "io.github.tuckformac.tuck.zone-mirror", qos: .utility)
+
+    var isZoneMirrorEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.zoneMirrorEnabledKey) == nil || UserDefaults.standard.bool(forKey: Self.zoneMirrorEnabledKey)
+    }
+
+    /// 入口文件夹位置：第一次用时按当前语言起名（“Tuck 分区”/“Tuck Zones”），之后固定不变。
+    var zoneMirrorURL: URL {
+        // 测试 / 截图用的独立实例（DESKTOPFRAMES_DATA_DIR）绝不能改写真实的入口文件夹：
+        // 否则演示分区会把用户真实分区的链接换掉。可用 DESKTOPFRAMES_MIRROR_DIR 指定，没指定就放临时目录。
+        let env = ProcessInfo.processInfo.environment
+        if let dir = env["DESKTOPFRAMES_MIRROR_DIR"], dir.hasPrefix("/") {
+            return URL(fileURLWithPath: dir, isDirectory: true)
+        }
+        if let dataDir = env["DESKTOPFRAMES_DATA_DIR"], !dataDir.isEmpty {
+            let safe = dataDir.replacingOccurrences(of: "/", with: "-")
+            return FileManager.default.temporaryDirectory
+                .appendingPathComponent("TuckMirror-\(safe)", isDirectory: true)
+                .appendingPathComponent(L("Tuck 分区", "Tuck Zones"), isDirectory: true)
+        }
+        if let saved = UserDefaults.standard.string(forKey: Self.zoneMirrorPathKey), saved.hasPrefix("/") {
+            return URL(fileURLWithPath: saved, isDirectory: true)
+        }
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(L("Tuck 分区", "Tuck Zones"), isDirectory: true)
+        UserDefaults.standard.set(url.path, forKey: Self.zoneMirrorPathKey)
+        return url
+    }
+
+    /// 按当前分区刷新入口文件夹（后台进行，只建 / 删 Tuck 自己的链接，原文件一律不动）。
+    func syncZoneMirror() {
+        guard isZoneMirrorEnabled else { return }
+        let mirror = ZoneMirror(root: zoneMirrorURL)
+        let plan = ZoneMirror.plan(for: model.document.zones)
+        guard plan != lastMirrorPlan else { return } // 没变化就不碰磁盘
+        lastMirrorPlan = plan
+        Self.mirrorQueue.async { mirror.sync(plan) }
+    }
+
+    @objc func toggleZoneMirror(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(!isZoneMirrorEnabled, forKey: Self.zoneMirrorEnabledKey)
+        sender.state = isZoneMirrorEnabled ? .on : .off
+        lastMirrorPlan = nil
+        if isZoneMirrorEnabled { syncZoneMirror(); openZoneMirror(nil) }
+    }
+
+    @objc func openZoneMirror(_ sender: Any?) {
+        if !FileManager.default.fileExists(atPath: zoneMirrorURL.path) {
+            lastMirrorPlan = nil
+            ZoneMirror(root: zoneMirrorURL).sync(ZoneMirror.plan(for: model.document.zones))
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([zoneMirrorURL])
     }
 
     /// 从分区里把项目拖出去之前：先恢复显示，避免带着隐藏标记被移到别处“消失”。
@@ -148,7 +249,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     /// 把这些文件里被 Tuck 隐藏的先恢复显示（移动 / 复制前调用，免得带着隐藏标记过去）。
     /// 返回是否真的恢复了任何一个。之后的对账会把仍在分区里、仍在桌面上的重新隐藏。
     @discardableResult
-    private func releaseHidden(_ urls: [URL]) -> Bool {
+    func releaseHidden(_ urls: [URL]) -> Bool {
         guard let registry = hiddenRegistry, let hider = desktopHider else { return false }
         let paths = Set(urls.map { DesktopHider.canonicalItemPath($0) })
         guard !paths.isDisjoint(with: registry.paths) else { return false }
@@ -306,6 +407,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
 
     func setPeeking(_ peeking: Bool) {
         isPeeking = peeking
+        RefractionState.shared.suspended = peeking // 浮到最上层时后面是别的窗口，不是壁纸
         peekMenuItem?.state = peeking ? .on : .off
         for window in windows.values {
             window.level = currentLevel
@@ -373,10 +475,10 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
 
         let defaultName = defaultName(for: kind)
         guard let name = promptForName(
-            title: "新建\(kind.displayName)",
+            title: L("新建\(kind.displayName)", "New \(kind.displayName)"),
             message: backingFolderPath == nil
-                ? "输入分区名称。"
-                : "关联文件夹：\(backingFolderPath ?? "")",
+                ? L("输入分区名称。", "Name the zone.")
+                : L("关联文件夹：\(backingFolderPath ?? "")", "Folder: \(backingFolderPath ?? "")"),
             defaultText: defaultName
         ), !name.isEmpty else { return }
 
@@ -395,7 +497,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
 
     func promptRename(zoneID: UUID) {
         guard let zone = model.zone(id: zoneID) else { return }
-        guard let name = promptForName(title: "重命名分区", message: "输入新名称。", defaultText: zone.name),
+        guard let name = promptForName(title: L("重命名分区", "Rename Zone"), message: L("输入新名称。", "Enter a new name."), defaultText: zone.name),
               !name.isEmpty, name != zone.name else { return }
         model.renameZone(id: zoneID, name: name)
     }
@@ -404,10 +506,10 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         guard let zone = model.zone(id: zoneID) else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "删除分区“\(zone.name)”？"
-        alert.informativeText = "仅移除分区及其入口，不会删除任何文件或文件夹。"
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = L("删除分区“\(zone.name)”？", "Delete the zone “\(zone.name)”?")
+        alert.informativeText = L("仅移除分区及其入口，不会删除任何文件或文件夹。", "Only the zone and its shortcuts are removed. No files or folders are deleted.")
+        alert.addButton(withTitle: L("删除", "Delete"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         model.deleteZone(id: zoneID)
@@ -427,7 +529,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         case .app:
             let apps = urls.filter { FileTypeInspector.kind(of: $0) == .application }
             if apps.count != urls.count {
-                inform(title: "应用分区", text: "只接受应用（.app）入口，已忽略 \(urls.count - apps.count) 个非应用项目。")
+                inform(title: L("应用分区", "App zone"), text: L("只接受应用（.app）入口，已忽略 \(urls.count - apps.count) 个非应用项目。", "Only apps (.app) can go here; ignored \(urls.count - apps.count) item(s) that aren't apps."))
             }
             addEntries(urls: apps, to: zone, moved: false)
         case .folder:
@@ -442,15 +544,15 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
                 .flatMap { $0.items.map { $0.url.standardizedFileURL.path } })
             let movable = outside.filter { !entryPaths.contains($0.standardizedFileURL.path) }
             if movable.count < outside.count {
-                inform(title: "没有移动",
-                       text: "有 \(outside.count - movable.count) 个项目来自普通 / 应用分区，这类分区不移动原文件。如需移动，请从访达拖入。")
+                inform(title: L("没有移动", "Nothing moved"),
+                       text: L("有 \(outside.count - movable.count) 个项目来自普通 / 应用分区，这类分区不移动原文件。如需移动，请从访达拖入。", "\(outside.count - movable.count) item(s) came from a regular or app zone, which never move the original files. To move them, drag them in from Finder."))
             }
             guard !movable.isEmpty else { return }
             performRealMove(urls: movable, into: zone)
         }
     }
 
-    private func addEntries(urls: [URL], to zone: Zone, moved: Bool) {
+    func addEntries(urls: [URL], to zone: Zone, moved: Bool) {
         var added = 0
         for url in urls {
             // 用文件真实路径（系统记录的大小写）存入口，同一文件不会因大小写不同被加两次
@@ -465,12 +567,12 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     /// 文件分区：真实移动到关联文件夹，冲突需用户选择，成功后记录整批撤销。
     private func performRealMove(urls: [URL], into zone: Zone) {
         guard let folder = zone.backingFolderURL else {
-            inform(title: "无法移动", text: "此分区没有关联文件夹。请删除后重新创建“文件分区”并选择文件夹。")
+            inform(title: L("无法移动", "Can't move"), text: L("此分区没有关联文件夹。请删除后重新创建“文件分区”并选择文件夹。", "This zone has no folder. Delete it, create a “Folder zone” again and pick a folder."))
             return
         }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            inform(title: "无法移动", text: "分区关联的文件夹不存在：\(folder.path)\n请删除分区并重新创建，选择存在的文件夹。")
+            inform(title: L("无法移动", "Can't move"), text: L("分区关联的文件夹不存在：\(folder.path)\n请删除分区并重新创建，选择存在的文件夹。", "The zone's folder doesn't exist: \(folder.path)\nDelete the zone and create it again with a folder that exists."))
             return
         }
 
@@ -489,7 +591,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         // 真实移动放到后台：跨盘大文件夹也不会让界面转圈；分区里显示进度，可随时取消。
         let service = fileService
         let zoneID = zone.id
-        runTransfer(zoneID: zoneID, title: "正在移入 \(urls.count) 项…") { progress -> [MoveResult] in
+        runTransfer(zoneID: zoneID, title: L("正在移入 \(urls.count) 项…", "Moving in \(urls.count) item(s)…")) { progress -> [MoveResult] in
             var results: [MoveResult] = []
             // 同一批里有重名项目（例如来自访达搜索结果）：第二个起一律“保留两者”，绝不互相替换。
             var namesInBatch = Set<String>()
@@ -519,24 +621,24 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
             }
             if !records.isEmpty {
                 self.model.setUndoBatch(records)
-                self.inform(title: "已移动 \(records.count) 项", text: "可通过菜单栏“撤销上次移动”还原。")
+                self.inform(title: L("已移动 \(records.count) 项", "Moved \(records.count) item(s)"), text: L("可通过菜单栏“撤销上次移动”还原。", "Use “Undo Last Move” in the menu bar to put it back."))
             }
-            self.reportProblems(results, verb: "移动")
+            self.reportProblems(results, verb: L("移动", "move"))
         }
     }
 
-    private func promptConflictPolicy(conflictNames: [String]) -> ConflictPolicy? {
+    func promptConflictPolicy(conflictNames: [String]) -> ConflictPolicy? {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "分区文件夹中已有同名项目"
+        alert.messageText = L("分区文件夹中已有同名项目", "The zone folder already has items with the same name")
         let shown = conflictNames.prefix(5).joined(separator: "、")
         alert.informativeText = conflictNames.count > 5
-            ? "\(shown) 等 \(conflictNames.count) 项与目标文件夹重名。请选择处理方式："
-            : "\(shown) 与目标文件夹重名。请选择处理方式："
+            ? L("\(shown) 等 \(conflictNames.count) 项与目标文件夹重名。请选择处理方式：", "\(shown) and others (\(conflictNames.count) in all) have the same name as items in the folder. What should happen?")
+            : L("\(shown) 与目标文件夹重名。请选择处理方式：", "\(shown) has the same name as an item in the folder. What should happen?")
         // “取消”是默认按钮（回车 = 取消），替换需要明确点选；被替换的旧文件会进废纸篓。
-        alert.addButton(withTitle: "取消")
-        alert.addButton(withTitle: "保留两者")
-        alert.addButton(withTitle: "替换（旧文件移到废纸篓）")
+        alert.addButton(withTitle: L("取消", "Cancel"))
+        alert.addButton(withTitle: L("保留两者", "Keep Both"))
+        alert.addButton(withTitle: L("替换（旧文件移到废纸篓）", "Replace (old file goes to the Trash)"))
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertSecondButtonReturn: return .keepBoth
@@ -567,13 +669,13 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     }
 
     /// 文件已被移动/删除：父目录仍在则视为“失效入口”，提示后移除；父目录也没了提示不可用。
-    private func informMissingAndRemove(url: URL) {
+    func informMissingAndRemove(url: URL) {
         let fm = FileManager.default
         if fm.fileExists(atPath: url.deletingLastPathComponent().path) {
             model.removeEntries(pointingTo: url)
-            inform(title: "入口已失效", text: "“\(url.lastPathComponent)”已不在原位置（可能被移动或删除），已从分区移除该入口。")
+            inform(title: L("入口已失效", "Shortcut broken"), text: L("“\(url.lastPathComponent)”已不在原位置（可能被移动或删除），已从分区移除该入口。", "“\(url.lastPathComponent)” is no longer where it was (maybe moved or deleted), so its shortcut was removed from the zone."))
         } else {
-            inform(title: "无法打开", text: "“\(url.lastPathComponent)”所在的文件夹当前不可用。")
+            inform(title: L("无法打开", "Can't open"), text: L("“\(url.lastPathComponent)”所在的文件夹当前不可用。", "The folder holding “\(url.lastPathComponent)” isn't available right now."))
         }
     }
 
@@ -583,7 +685,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     func moveItemToDesktop(item: ZoneItem, zone: Zone) {
         let fm = FileManager.default
         guard let desktop = fm.urls(for: .desktopDirectory, in: .userDomainMask).first else {
-            inform(title: "无法移动", text: "找不到桌面目录。")
+            inform(title: L("无法移动", "Can't move"), text: L("找不到桌面目录。", "Couldn't find the Desktop folder."))
             return
         }
         moveItemOut(item: item, zone: zone, to: desktop)
@@ -596,8 +698,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.message = "选择要把“\(item.url.lastPathComponent)”移动到的文件夹"
-        panel.prompt = "移动到此"
+        panel.message = L("选择要把“\(item.url.lastPathComponent)”移动到的文件夹", "Choose where to move “\(item.url.lastPathComponent)”")
+        panel.prompt = L("移动到此", "Move Here")
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         moveItemOut(item: item, zone: zone, to: folder)
@@ -613,7 +715,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         }
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else {
-            inform(title: "无法移动", text: "目标文件夹不存在。")
+            inform(title: L("无法移动", "Can't move"), text: L("目标文件夹不存在。", "The destination folder doesn't exist."))
             return
         }
 
@@ -630,7 +732,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         let service = fileService
         let source = item.url
         let itemID = item.id, zoneID = zone.id
-        runTransfer(zoneID: zoneID, title: "正在移出“\(targetName)”…") { progress -> [MoveResult] in
+        runTransfer(zoneID: zoneID, title: L("正在移出“\(targetName)”…", "Moving out “\(targetName)”…")) { progress -> [MoveResult] in
             [MoveResult.run(source) { try service.moveDetailed(item: source, into: folder, policy: policy, progress: progress) }]
         } completion: { [weak self] results in
             guard let self, let r = results.first else { return }
@@ -638,11 +740,11 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
             case .moved(let destination, let trashed):
                 self.model.removeItem(id: itemID, from: zoneID)
                 self.model.setUndoBatch([MoveUndoRecord(source: source, destination: destination, replacedTrashURL: trashed)])
-                self.inform(title: "已移出", text: "“\(targetName)”已移动到：\(destination.path)\n可通过菜单栏“撤销上次移动”移回。")
+                self.inform(title: L("已移出", "Moved out"), text: L("“\(targetName)”已移动到：\(destination.path)\n可通过菜单栏“撤销上次移动”移回。", "“\(targetName)” was moved to: \(destination.path)\nUse “Undo Last Move” in the menu bar to move it back."))
             case .skipped:
-                self.inform(title: "已取消", text: "目标文件夹已有同名项目，未执行移动。")
+                self.inform(title: L("已取消", "Cancelled"), text: L("目标文件夹已有同名项目，未执行移动。", "The destination already has an item with that name, so nothing was moved."))
             default:
-                self.reportProblems(results, verb: "移动")
+                self.reportProblems(results, verb: L("移动", "move"))
             }
         }
     }
@@ -744,13 +846,14 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     }
 
     /// 移动 / 复制到某个文件夹（后台进行，分区里显示进度，可取消），和访达一样不弹“已完成”提示。
-    private func transferIntoFolder(urls: [URL], folder: URL, copy: Bool, zoneID: UUID) {
+    /// - addingEntriesTo: 完成后把移过去 / 复制出来的项目加进这个分区（“粘贴”到文件分区时用）。
+    func transferIntoFolder(urls: [URL], folder: URL, copy: Bool, zoneID: UUID, addingEntriesTo entryZoneID: UUID? = nil) {
         let fm = FileManager.default
         let folderPath = FileOperationService.canonicalPath(folder)
         let candidates = urls.filter { fm.fileExists(atPath: $0.path) }
         guard !candidates.isEmpty else { return }
         guard !transfers.isBusy else {
-            inform(title: "请稍候", text: "上一次移动还没完成，可以在分区里看到进度或点“取消”。")
+            inform(title: L("请稍候", "Please wait"), text: L("上一次移动还没完成，可以在分区里看到进度或点“取消”。", "The last move isn't finished yet. You can see its progress in the zone or click “Cancel”."))
             return
         }
         // 冲突：目标里已有同名项（复制到原文件夹会自动另起名字，不算冲突）
@@ -768,8 +871,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         releaseHidden(candidates)
         let service = fileService
         let chosenPolicy = policy
-        let verb = copy ? "复制" : "移动"
-        runTransfer(zoneID: zoneID, title: "正在\(verb) \(candidates.count) 项到“\(folder.lastPathComponent)”…") { progress -> [MoveResult] in
+        let verb = copy ? L("复制", "copy") : L("移动", "move")
+        runTransfer(zoneID: zoneID, title: L("正在\(verb) \(candidates.count) 项到“\(folder.lastPathComponent)”…", "\(copy ? "Copying" : "Moving") \(candidates.count) item(s) to “\(folder.lastPathComponent)”…")) { progress -> [MoveResult] in
             var results: [MoveResult] = []
             var namesInBatch = Set<String>()
             for url in candidates {
@@ -786,6 +889,12 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
             return results
         } completion: { [weak self] results in
             guard let self else { return }
+            if let entryZoneID {
+                for r in results {
+                    guard case .moved(let destination, _) = r.status else { continue }
+                    self.model.addItem(ZoneItem(url: destination, kind: FileTypeInspector.kind(of: destination)), to: entryZoneID)
+                }
+            }
             if !copy {
                 let records = results.compactMap { r -> MoveUndoRecord? in
                     guard case .moved(let destination, let trashed) = r.status else { return nil }
@@ -801,26 +910,31 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     }
 
     /// ⌘⌥ 拖放：在目标文件夹里做替身（和访达的“制作替身”同一种文件）。
-    private func makeAliases(_ urls: [URL], in folder: URL) {
+    @discardableResult
+    func makeAliases(_ urls: [URL], in folder: URL? = nil) -> [URL] {
         var failures: [String] = []
+        var made: [URL] = []
         for url in urls {
             do {
                 let data = try url.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
-                let base = url.lastPathComponent + " 的替身"
-                var dest = folder.appendingPathComponent(base)
+                let base = url.lastPathComponent + L(" 的替身", " alias")
+                let target = folder ?? url.deletingLastPathComponent() // 没给文件夹 = 和原项目放一起（访达“制作替身”）
+                var dest = target.appendingPathComponent(base)
                 var n = 2
                 while FileManager.default.fileExists(atPath: dest.path) {
-                    dest = folder.appendingPathComponent("\(base) \(n)")
+                    dest = target.appendingPathComponent("\(base) \(n)")
                     n += 1
                 }
                 try URL.writeBookmarkData(data, to: dest)
+                made.append(dest)
             } catch {
                 failures.append("\(url.lastPathComponent)：\(error.localizedDescription)")
             }
         }
         if !failures.isEmpty {
-            inform(title: "无法制作替身", text: failures.joined(separator: "\n"))
+            inform(title: L("无法制作替身", "Couldn't make aliases"), text: failures.joined(separator: "\n"))
         }
+        return made
     }
 
     /// 打开多个（双击 / ⌘O 作用于整组选中项）。
@@ -874,15 +988,17 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     /// 菜单栏：清理全部失效入口并报告数量。
     @objc func purgeNowMenuAction(_ sender: Any?) {
         let removed = model.purgeMissingEntries()
-        inform(title: "清理失效入口", text: removed > 0 ? "移除了 \(removed) 个已不存在项目的入口。" : "没有发现失效入口。")
+        inform(title: L("清理失效入口", "Clean Up Broken Shortcuts"), text: removed > 0 ? L("移除了 \(removed) 个已不存在项目的入口。", "Removed \(removed) shortcut(s) to items that no longer exist.") : L("没有发现失效入口。", "No broken shortcuts found."))
     }
 
     /// 菜单栏：关于——显示可执行文件路径与构建时间，便于确认运行的是否为最新版本。
     @objc func showAbout(_ sender: Any?) {
-        let exe = Bundle.main.executablePath ?? "未知"
+        let exe = Bundle.main.executablePath ?? L("未知", "unknown")
         let built = (try? FileManager.default.attributesOfItem(atPath: exe)[.modificationDate] as? Date) ?? nil
-        let timeText = built.map { Self.dateFormatter.string(from: $0) } ?? "未知"
-        inform(title: AppInfo.name, text: "版本：\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版")（液态玻璃）\n可执行文件：\(exe)\n构建时间：\(timeText)")
+        let timeText = built.map { Self.dateFormatter.string(from: $0) } ?? L("未知", "unknown")
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? L("开发版", "dev build")
+        inform(title: AppInfo.name, text: L("版本：\(version)（液态玻璃）\n可执行文件：\(exe)\n构建时间：\(timeText)",
+                                               "Version: \(version) (Liquid Glass)\nExecutable: \(exe)\nBuilt: \(timeText)"))
     }
 
     @objc func undoLastMove(_ sender: Any?) {
@@ -892,8 +1008,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         // 进度显示在目标项目所在的分区里
         let zoneID = model.document.zones.first { zone in
             zone.items.contains { item in batch.contains { $0.destination.standardizedFileURL == item.url.standardizedFileURL } }
-        }?.id
-        runTransfer(zoneID: zoneID, title: "正在撤销移动…") { progress -> [MoveResult] in
+        }?.id ?? batch.lazy.compactMap(\.restoreZoneID).first
+        runTransfer(zoneID: zoneID, title: L("正在撤销移动…", "Undoing the move…")) { progress -> [MoveResult] in
             var results: [MoveResult] = []
             var stop = false
             for record in batch {
@@ -919,14 +1035,17 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
                     zone.kind == .folder && zone.backingFolderURL.map { FileOperationService.canonicalPath($0) } == parent
                 }) {
                     self.model.addItem(ZoneItem(url: record.source, kind: FileTypeInspector.kind(of: record.source)), to: home.id)
+                } else if let restore = record.restoreZoneID, self.model.zone(id: restore) != nil {
+                    // 撤销“移到废纸篓”：文件回到原位，普通 / 应用分区里的入口也一起回来
+                    self.model.addItem(ZoneItem(url: record.source, kind: FileTypeInspector.kind(of: record.source)), to: restore)
                 }
             }
             let remaining = batch.filter { !undone.contains($0) }
             self.model.setUndoBatch(remaining.isEmpty ? nil : remaining)
             if !undone.isEmpty {
-                self.inform(title: "已撤销移动", text: "已把 \(undone.count) 个项目移回原位。")
+                self.inform(title: L("已撤销移动", "Move undone"), text: L("已把 \(undone.count) 个项目移回原位。", "Moved \(undone.count) item(s) back where they were."))
             }
-            self.reportProblems(results, verb: "撤销")
+            self.reportProblems(results, verb: L("撤销", "undo"))
         }
     }
 
@@ -934,14 +1053,14 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
 
     /// 在后台队列执行文件移动，期间分区显示进度、可取消；完成后回主线程更新布局。
     /// 同一时间只允许一个移动任务。
-    private func runTransfer(
+    func runTransfer(
         zoneID: UUID?,
         title: String,
         work: @escaping @Sendable (TransferProgress) -> [MoveResult],
         completion: @escaping @MainActor ([MoveResult]) -> Void
     ) {
         guard !transfers.isBusy else {
-            inform(title: "请稍候", text: "上一次移动还没完成，可以在分区里看到进度或点“取消”。")
+            inform(title: L("请稍候", "Please wait"), text: L("上一次移动还没完成，可以在分区里看到进度或点“取消”。", "The last move isn't finished yet. You can see its progress in the zone or click “Cancel”."))
             return
         }
         let (id, progress) = transfers.begin(zoneID: zoneID, title: title)
@@ -972,17 +1091,17 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         return .terminateLater
     }
 
-    private func reportProblems(_ results: [MoveResult], verb: String) {
+    func reportProblems(_ results: [MoveResult], verb: String) {
         let failures = results.compactMap { r -> String? in
             if case .failed(let message) = r.status { return "\(r.source.lastPathComponent)：\(message)" }
             return nil
         }
         let cancelled = results.filter { if case .cancelled = $0.status { return true } else { return false } }.count
         if cancelled > 0 {
-            inform(title: "已取消", text: "有 \(cancelled) 项没有\(verb)，原文件都保持不变。")
+            inform(title: L("已取消", "Cancelled"), text: L("有 \(cancelled) 项没有\(verb)，原文件都保持不变。", "\(cancelled) item(s) were left alone (\(verb) cancelled); the originals are unchanged."))
         }
         if !failures.isEmpty {
-            inform(title: "有 \(failures.count) 项未能\(verb)", text: failures.prefix(3).joined(separator: "\n") + (failures.count > 3 ? "\n…" : ""))
+            inform(title: L("有 \(failures.count) 项未能\(verb)", "Couldn't \(verb) \(failures.count) item(s)"), text: failures.prefix(3).joined(separator: "\n") + (failures.count > 3 ? "\n…" : ""))
         }
     }
 
@@ -1098,20 +1217,21 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         if moved == 0 && kept.isEmpty { return "" }
         var parts: [String] = []
         if moved > 0 {
-            parts.append("已把 \(moved) 项放回桌面原位置")
+            parts.append(L("已把 \(moved) 项放回桌面原位置", "Put \(moved) item(s) back where they were on the desktop"))
         }
         if !kept.isEmpty {
-            let names = kept.prefix(3).map { "“\($0)”" }.joined(separator: "、")
-            let suffix = kept.count > 3 ? " 等 \(kept.count) 项" : ""
-            parts.append("\(suffix.isEmpty ? "" : "")\(kept.count) 项因原位置已有同名文件未移动（\(names)\(kept.count > 3 ? "…" : "")）")
+            let names = kept.prefix(3).map { "“\($0)”" }.joined(separator: L("、", ", "))
+            let more = kept.count > 3 ? "…" : ""
+            parts.append(L("\(kept.count) 项因原位置已有同名文件未移动（\(names)\(more)）",
+                           "\(kept.count) item(s) not moved because something with the same name is already there (\(names)\(more))"))
         }
-        return parts.joined(separator: "；")
+        return parts.joined(separator: L("；", "; "))
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem === undoMenuItem || menuItem.action == #selector(undoLastMove(_:)) {
             let count = model.undoBatch.count
-            menuItem.title = count > 1 ? "撤销上次移动（\(count) 项）" : "撤销上次移动"
+            menuItem.title = count > 1 ? L("撤销上次移动（\(count) 项）", "Undo Last Move (\(count) items)") : L("撤销上次移动", "Undo Last Move")
             menuItem.isEnabled = count > 0
             return menuItem.isEnabled
         }
@@ -1131,9 +1251,9 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
             }
             windows.removeAll()
             syncAllWindows()
-            inform(title: "已恢复备份", text: "已从 \(Self.dateFormatter.string(from: backup.date)) 的备份恢复布局。")
+            inform(title: L("已恢复备份", "Backup restored"), text: L("已从 \(Self.dateFormatter.string(from: backup.date)) 的备份恢复布局。", "Restored the layout from the backup of \(Self.dateFormatter.string(from: backup.date))."))
         } catch {
-            inform(title: "恢复失败", text: "无法读取该备份：\(error.localizedDescription)")
+            inform(title: L("恢复失败", "Restore failed"), text: L("无法读取该备份：\(error.localizedDescription)", "Couldn't read that backup: \(error.localizedDescription)"))
         }
     }
 
@@ -1146,7 +1266,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         menu.removeAllItems()
         let backups = store.availableBackups()
         if backups.isEmpty {
-            let item = NSMenuItem(title: "暂无备份", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: L("暂无备份", "No Backups Yet"), action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
             return
@@ -1589,8 +1709,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.message = "选择或新建文件夹分区关联的真实文件夹"
-        panel.prompt = "选择"
+        panel.message = L("选择或新建文件夹分区关联的真实文件夹", "Choose or create the real folder for this folder zone")
+        panel.prompt = L("选择", "Choose")
         NSApp.activate(ignoringOtherApps: true)
         return panel.runModal() == .OK ? panel.url : nil
     }
@@ -1603,8 +1723,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.stringValue = defaultText
         alert.accessoryView = field
-        alert.addButton(withTitle: "确定")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("确定", "OK"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1632,7 +1752,7 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
         alert.alertStyle = .informational
         alert.messageText = title
         alert.informativeText = text
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: L("好", "OK"))
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }

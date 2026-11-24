@@ -14,9 +14,9 @@ public enum ZoneKind: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .folder: return "文件分区"
-        case .virtual: return "虚拟分区"
-        case .app: return "应用分区"
+        case .folder: return L("文件分区", "Folder zone")
+        case .virtual: return L("虚拟分区", "Regular zone")
+        case .app: return L("应用分区", "App zone")
         }
     }
 
@@ -31,8 +31,8 @@ public enum ZoneViewMode: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .list: return "列表"
-        case .icon: return "图标"
+        case .list: return L("列表", "List")
+        case .icon: return L("图标", "Icons")
         }
     }
 }
@@ -156,6 +156,10 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
     public var locked: Bool
     /// 内容显示方式（列表 / 图标）。
     public var viewMode: ZoneViewMode
+    /// 自动排序方式（只影响显示顺序；`manual` = 按 items 里保存的顺序）。
+    public var sortOrder: ZoneSortOrder
+    /// 反过来排（名称 Z→A、日期旧的在前、小的在前）。
+    public var sortReversed: Bool
     public var items: [ZoneItem]
     public var createdAt: Date
     public var updatedAt: Date
@@ -172,6 +176,8 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         backingFolderPath: String? = nil,
         locked: Bool = false,
         viewMode: ZoneViewMode = .list,
+        sortOrder: ZoneSortOrder = .manual,
+        sortReversed: Bool = false,
         items: [ZoneItem] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -187,6 +193,8 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         self.backingFolderPath = backingFolderPath
         self.locked = locked
         self.viewMode = viewMode
+        self.sortOrder = sortOrder
+        self.sortReversed = sortReversed
         self.items = items
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -194,13 +202,13 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, kind, frame, screenID, appearance, tabs
-        case backingFolderBookmark, backingFolderPath, locked, viewMode, items, createdAt, updatedAt
+        case backingFolderBookmark, backingFolderPath, locked, viewMode, sortOrder, sortReversed, items, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "分区"
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? L("分区", "Zone")
         kind = try c.decodeIfPresent(ZoneKind.self, forKey: .kind) ?? .virtual
         frame = try c.decodeIfPresent(ZoneFrame.self, forKey: .frame) ?? ZoneFrame()
         screenID = try c.decodeIfPresent(String.self, forKey: .screenID) ?? ""
@@ -210,6 +218,9 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         backingFolderPath = try c.decodeIfPresent(String.self, forKey: .backingFolderPath)
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         viewMode = try c.decodeIfPresent(ZoneViewMode.self, forKey: .viewMode) ?? .list
+        // 旧存档没有这两项 / 以后的版本写了不认识的排序方式：都当作手动排列，不让整个布局失败
+        sortOrder = (try? c.decodeIfPresent(ZoneSortOrder.self, forKey: .sortOrder)) ?? .manual
+        sortReversed = (try? c.decodeIfPresent(Bool.self, forKey: .sortReversed)) ?? false
         // 逐条容错：某一条损坏 / 不是本地文件 URL 时只丢掉这一条，不让整个布局被判为损坏。
         items = (try c.decodeIfPresent([LossyItem].self, forKey: .items) ?? []).compactMap(\.value)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
@@ -229,10 +240,15 @@ public struct Zone: Codable, Identifiable, Equatable, Sendable {
         try c.encodeIfPresent(backingFolderPath, forKey: .backingFolderPath)
         try c.encode(locked, forKey: .locked)
         try c.encode(viewMode, forKey: .viewMode)
+        try c.encode(sortOrder, forKey: .sortOrder)
+        try c.encode(sortReversed, forKey: .sortReversed)
         try c.encode(items, forKey: .items)
         try c.encode(createdAt, forKey: .createdAt)
         try c.encode(updatedAt, forKey: .updatedAt)
     }
+
+    /// 是否在自动排序（自动排序时不能手动拖动调整顺序，和访达一样）。
+    public var isAutoSorted: Bool { sortOrder != .manual }
 
     /// 是否为虚拟/应用等不改动源文件的分区。
     public var isEntryOnly: Bool { kind != .folder }
