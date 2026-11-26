@@ -7,7 +7,7 @@ struct DownloadZoneTests {
 
     @Test("下载中的临时文件和隐藏文件不算")
     func ignorable() {
-        for name in ["报告.pdf.crdownload", "Unconfirmed 123.crdownload", "视频.mp4.download", "a.zip.part", ".DS_Store", "x.opdownload", "Icon\r"] {
+        for name in ["~$报告.docx", "报告.pdf.crdownload", "Unconfirmed 123.crdownload", "视频.mp4.download", "a.zip.part", ".DS_Store", "x.opdownload", "Icon\r"] {
             #expect(DownloadFiles.isIgnorable(name: name), "\(name)")
         }
         for name in ["报告.pdf", "下载.zip", "partner.docx", "Download Guide.pdf"] {
@@ -23,53 +23,70 @@ struct DownloadZoneTests {
         #expect(DownloadFiles.parseQuarantine("0083;zz;Safari;") == nil)
     }
 
-    @Test("原有的桌面文件永远不收；新下载要连续两次大小不变才收")
+    private func names(_ r: [DesktopDownloadCollector.Ready]) -> [String] { r.map(\.name) }
+
+    @Test("原有的文件永远不收；新文件要连续两次大小不变才收")
     func collector() {
         let now = Date()
         var c = DesktopDownloadCollector(baseline: ["旧文件.pdf", "截图.png"])
-        // 原有文件即使带新的下载标记也不收
-        #expect(c.step([.init(name: "旧文件.pdf", size: 10, downloadedAt: now)], now: now, webOnly: true).isEmpty)
-        // 下载中：临时名字不收
-        #expect(c.step([.init(name: "新.pdf.crdownload", size: 5, downloadedAt: now)], now: now, webOnly: true).isEmpty)
-        // 改成正式名字：第一次看到先等
-        #expect(c.step([.init(name: "新.pdf", size: 100, downloadedAt: now)], now: now, webOnly: true).isEmpty)
+        #expect(c.step([.init(name: "旧文件.pdf", size: 10, createdAt: now)], now: now, includeScreenshots: false).isEmpty)
+        #expect(c.step([.init(name: "新.pdf.crdownload", size: 5, createdAt: now)], now: now, includeScreenshots: false).isEmpty)
+        #expect(c.step([.init(name: "新.pdf", size: 100, createdAt: now)], now: now, includeScreenshots: false).isEmpty)
         #expect(c.hasPending)
-        // 还在变大：继续等
-        #expect(c.step([.init(name: "新.pdf", size: 120, downloadedAt: now)], now: now, webOnly: true).isEmpty)
-        // 大小稳定：收
-        #expect(c.step([.init(name: "新.pdf", size: 120, downloadedAt: now)], now: now, webOnly: true) == ["新.pdf"])
+        #expect(c.step([.init(name: "新.pdf", size: 120, createdAt: now)], now: now, includeScreenshots: false).isEmpty)
+        #expect(names(c.step([.init(name: "新.pdf", size: 120, createdAt: now)], now: now, includeScreenshots: false)) == ["新.pdf"])
         #expect(!c.hasPending)
-        // 收过的不再收
-        #expect(c.step([.init(name: "新.pdf", size: 120, downloadedAt: now)], now: now, webOnly: true).isEmpty)
+        #expect(c.step([.init(name: "新.pdf", size: 120, createdAt: now)], now: now, includeScreenshots: false).isEmpty)
     }
 
-    @Test("只收网页下载时：没有下载标记、或很久以前下的，不收")
-    func webOnly() {
+    @Test("另存为 / 别的软件保存（没有下载标记）也收；老文件挪进来不收；Office 锁文件不收")
+    func anySave() {
         let now = Date()
         var c = DesktopDownloadCollector(baseline: [])
         let entries: [DesktopDownloadCollector.Entry] = [
-            .init(name: "截屏.png", size: 1, downloadedAt: nil),
-            .init(name: "老下载.zip", size: 1, downloadedAt: now.addingTimeInterval(-86400)),
+            .init(name: "网页图片.jpg", size: 2000, createdAt: now.addingTimeInterval(-3)),
+            .init(name: "去年的表.xlsx", size: 900, createdAt: now.addingTimeInterval(-86400)),
+            .init(name: "~$报告.docx", size: 162, createdAt: now),
         ]
-        #expect(c.step(entries, now: now, webOnly: true).isEmpty)
-        #expect(c.step(entries, now: now, webOnly: true).isEmpty)
-        // 关掉“只收网页下载”：新出现的截图会收
-        var all = DesktopDownloadCollector(baseline: [])
-        let shot = [DesktopDownloadCollector.Entry(name: "截屏.png", size: 1, downloadedAt: nil)]
-        #expect(all.step(shot, now: now, webOnly: false).isEmpty)
-        #expect(all.step(shot, now: now, webOnly: false) == ["截屏.png"])
+        #expect(c.step(entries, now: now, includeScreenshots: false).isEmpty)
+        #expect(names(c.step(entries, now: now, includeScreenshots: false)) == ["网页图片.jpg"])
     }
 
-    @Test("被删掉后同名再下载一次，还会收")
+    @Test("正被软件打开着（还在写）的先不收，关了再收")
+    func inUse() {
+        let now = Date()
+        var c = DesktopDownloadCollector(baseline: [])
+        let open = DesktopDownloadCollector.Entry(name: "导出.mov", size: 5000, createdAt: now, inUse: true)
+        #expect(c.step([open], now: now, includeScreenshots: false).isEmpty)
+        #expect(c.step([open], now: now, includeScreenshots: false).isEmpty)
+        #expect(c.hasPending)
+        let closed = DesktopDownloadCollector.Entry(name: "导出.mov", size: 5000, createdAt: now)
+        #expect(c.step([closed], now: now, includeScreenshots: false).isEmpty)
+        #expect(names(c.step([closed], now: now, includeScreenshots: false)) == ["导出.mov"])
+    }
+
+    @Test("截图默认不收；勾上「截图也收」才收，并标明是截图")
+    func screenshots() {
+        let now = Date()
+        let shot = DesktopDownloadCollector.Entry(name: "截屏2026-11-26 10.00.00.png", size: 1, createdAt: now, isScreenshot: true)
+        var off = DesktopDownloadCollector(baseline: [])
+        #expect(off.step([shot], now: now, includeScreenshots: false).isEmpty)
+        #expect(off.step([shot], now: now, includeScreenshots: false).isEmpty)
+        var on = DesktopDownloadCollector(baseline: [])
+        #expect(on.step([shot], now: now, includeScreenshots: true).isEmpty)
+        #expect(on.step([shot], now: now, includeScreenshots: true) == [.init(name: shot.name, isScreenshot: true)])
+    }
+
+    @Test("被删掉后同名再存一次，还会收")
     func redownload() {
         let now = Date()
         var c = DesktopDownloadCollector(baseline: [])
-        let e = DesktopDownloadCollector.Entry(name: "a.pdf", size: 3, downloadedAt: now)
-        _ = c.step([e], now: now, webOnly: true)
-        #expect(c.step([e], now: now, webOnly: true) == ["a.pdf"])
-        _ = c.step([], now: now, webOnly: true)
-        _ = c.step([e], now: now, webOnly: true)
-        #expect(c.step([e], now: now, webOnly: true) == ["a.pdf"])
+        let e = DesktopDownloadCollector.Entry(name: "a.pdf", size: 3, createdAt: now)
+        _ = c.step([e], now: now, includeScreenshots: false)
+        #expect(names(c.step([e], now: now, includeScreenshots: false)) == ["a.pdf"])
+        _ = c.step([], now: now, includeScreenshots: false)
+        _ = c.step([e], now: now, includeScreenshots: false)
+        #expect(names(c.step([e], now: now, includeScreenshots: false)) == ["a.pdf"])
     }
 
     @Test("下载分区：自动列出的入口不写进布局，只存真实移动进来的；退出归位不碰下载的文件")
@@ -159,8 +176,8 @@ struct DownloadZoneTests {
         var c = DesktopDownloadCollector(baseline: [])
         var got: [String] = []
         for files in steps {
-            let entries = files.map { DesktopDownloadCollector.Entry(name: $0.0, size: $0.1, downloadedAt: now) }
-            got += c.step(entries, now: now, webOnly: true)
+            let entries = files.map { DesktopDownloadCollector.Entry(name: $0.0, size: $0.1, createdAt: now) }
+            got += c.step(entries, now: now, includeScreenshots: false).map(\.name)
         }
         return got
     }

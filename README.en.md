@@ -25,7 +25,7 @@
 
 ## Latest
 
-**v2.2.0** (2026-11-24): **more realistic liquid glass** (convex-bevel refraction with a thin bright rim, clear in the middle), Finder-style **auto sort** (name / kind / date / size), glass that **refracts** (edge stretch / fluted glass, dynamic wallpapers too), three new edge lights with a highlight that **follows the lid angle**, a **Finder-style context menu**, a “**Tuck Zones**” folder in Home (so upload dialogs can find tucked files), and an **English interface**. Every version is in the [release history](#-release-history) below; full notes in the [CHANGELOG](CHANGELOG.md).
+**v2.4.0** (2026-11-26): **any newly saved file can go into a download zone** (browser downloads, Save As from a web page, saves from other apps into the Desktop or Downloads), **screenshots optional** (tick “Include Screenshots” and pick their zone), and the Appearance panel is readable in daytime too. v2.3.0 brought glass per zone and download zones. See [how to use the new features](#how-to-use-the-new-features-v23) below and every version in the [release history](#-release-history).
 
 ## How to use the new features (v2.3)
 
@@ -39,10 +39,11 @@
 - Creates a real folder inside the “Tuck Zones” folder in your Home (you can drag it to the Finder sidebar), e.g. `~/Tuck Zones/Downloads`. Everything in it shows in the zone, newest first; files still downloading don't.
 - Tuck never deletes this folder, and deleting the zone doesn't delete its files.
 
-**Move new downloads into a zone** (off by default)
+**Move new downloads into a zone** (off by default; any way of saving counts since v2.4)
 - Where: Tuck menu bar icon › **Move New Downloads Into** › pick a download zone, or “New Download Zone and Move Here…”.
-- Once on, files finished by any browser (Safari, Chrome, Edge, Firefox, Arc…), whether they land in Downloads or on the Desktop, are **moved** into the zone's folder about 2 seconds later and don't stay behind, so there's only one copy. No browser settings to change. This is the only place Tuck moves files, and only when you turn it on.
-- Only new downloads after turning it on: in-progress temp files (.download, .crdownload, .part, .opdownload…) and existing files are left alone; by default only web downloads are collected (screenshots and files you create aren't; untick “Only files downloaded from the web” in the same menu to change that).
+- Once on, new files saved to Downloads or the Desktop, whether a browser download (Safari, Chrome, Edge, Firefox, Arc…), a Save As from a web page, or a save from another app, are **moved** into the zone's folder about 2 seconds later and don't stay behind, so there's only one copy. No browser settings to change. This is the only place Tuck moves files, and only when you turn it on.
+- Only files newly created and fully written after turning it on: in-progress temp files (.download, .crdownload, .part, .opdownload…), Office ~$ lock files and files an app still has open are left alone, as are existing files, old files moved in from elsewhere, and files you drag back out of the zone.
+- Screenshots aren't collected by default: tick **Include Screenshots** in the same menu, and optionally pick which download zone they go to (the same zone by default).
 - The first time, Tuck explains this once, then macOS asks whether Tuck may read your Downloads folder: click Allow. If you clicked Don't Allow: System Settings › Privacy & Security › Files & Folders › Tuck › turn on Downloads Folder, then pick the zone again.
 - To put one back: **Undo Last Move** (⌘Z) in the menu bar returns the latest move, or just drag the file out of the zone. Name clashes get a number and nothing is overwritten; deleting in the zone moves to the Trash; when Tuck quits the files stay in the zone's folder.
 
@@ -95,10 +96,13 @@ Picture a few **clear glass trays** on your desktop:
 |:---:|:---:|
 | <img src="docs/images/en/refraction-edge.jpg" alt="Edge stretch"> | <img src="docs/images/en/refraction-fluted.jpg" alt="Fluted glass"> |
 
-#### Finder-style context menu · “Tuck Zones” folder <sup>v2.2</sup>
-| Context menu | Pick tucked files from “Tuck Zones” |
-| :---: | |
-| <img src="docs/images/en/tuck-zones-folder.jpg" alt="Tuck Zones folder"> | |
+#### “Tuck Zones” folder <sup>v2.2</sup>
+<img src="docs/images/en/tuck-zones-folder.jpg" width="640" alt="Pick tucked files from “Tuck Zones” in an upload dialog">
+
+#### Glass per zone · Download zone <sup>v2.3 / v2.4</sup>
+| Glass, refraction and edge per zone | New downloads and Save As land in the Downloads zone |
+|:---:|:---:|
+| <img src="docs/images/en/glass-per-zone.jpg" alt="Glass per zone"> | <img src="docs/images/en/download-zone.jpg" alt="Download zone"> |
 
 ## Install
 
@@ -181,7 +185,8 @@ Product behaviour inspired by [DesktopFramesPlus](https://github.com/limbo666/De
 
 | Version | Date | What changed | Download |
 |---|---|---|---|
-| **v2.3.0** `latest` | 2026-11-24 | Glass per zone, download zones, move new downloads into a zone (any browser) · [details](CHANGELOG.md#v230--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.3.0) |
+| **v2.4.0** `latest` | 2026-11-26 | Save As and other apps' saves also go into download zones, optional screenshots, Appearance panel readable in daytime · [details](CHANGELOG.md#v240--2026-11-26) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.4.0) |
+| **v2.3.0** | 2026-11-24 | Glass per zone, download zones, move new downloads into a zone (any browser) · [details](CHANGELOG.md#v230--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.3.0) |
 | **v2.2.0** | 2026-11-24 | More realistic liquid glass, auto sort, glass that refracts (edge stretch / fluted, dynamic wallpapers too), new edge lights + lid-angle highlight, Finder-style context menu, “Tuck Zones” folder, English interface · [details](CHANGELOG.md#v220--2026-11-24) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.2.0) |
 | **v2.1.0** | 2026-11-08 | First public release: Liquid Glass zones in three styles, capsules, desktop auto-hide, Finder-style items, crash watchdog · [details](CHANGELOG.md#v210--2026-11-08) | [Download](https://github.com/3520566741-YCLi/tuck-for-mac/releases/tag/v2.1.0) |
 

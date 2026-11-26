@@ -79,7 +79,8 @@ extension ZoneWindowManager {
     // MARK: - 2. 新下载自动收进分区（「下载」文件夹 + 桌面，不用改浏览器设置）
 
     static let collectZoneKey = "CollectDesktopDownloadsZone"
-    static let collectWebOnlyKey = "CollectDesktopDownloadsWebOnly"
+    static let collectScreenshotsKey = "CollectScreenshots"
+    static let screenshotZoneKey = "CollectScreenshotsZone"
     static let downloadsExplainedKey = "CollectDownloadsExplained"
 
     /// 新下载移进哪个下载分区（没选 / 那个分区已删 = 关）。
@@ -89,9 +90,21 @@ extension ZoneWindowManager {
         return id
     }
 
-    /// 只收从网上下载的文件（默认开）；关掉 = 新出现的文件都收（比如截图）。
-    var collectWebOnly: Bool {
-        UserDefaults.standard.object(forKey: Self.collectWebOnlyKey) == nil || UserDefaults.standard.bool(forKey: Self.collectWebOnlyKey)
+    /// 截图也收（默认关）。
+    var collectScreenshots: Bool { UserDefaults.standard.bool(forKey: Self.collectScreenshotsKey) }
+
+    /// 截图放进哪个下载分区（没选 / 已删 = 和其它新文件放同一个分区）。
+    var screenshotZoneID: UUID? {
+        guard let raw = UserDefaults.standard.string(forKey: Self.screenshotZoneKey), let id = UUID(uuidString: raw),
+              let zone = model.zone(id: id), zone.liveFolder, zone.backingFolderURL != nil else { return nil }
+        return id
+    }
+
+    func setCollectScreenshots(_ on: Bool) { UserDefaults.standard.set(on, forKey: Self.collectScreenshotsKey) }
+
+    func setScreenshotZone(_ id: UUID?) {
+        if let id { UserDefaults.standard.set(id.uuidString, forKey: Self.screenshotZoneKey) }
+        else { UserDefaults.standard.removeObject(forKey: Self.screenshotZoneKey) }
     }
 
     /// 系统的「下载」文件夹（浏览器默认下载到这里）。测试 / 截图用的独立实例不看真实的「下载」，
@@ -136,8 +149,8 @@ extension ZoneWindowManager {
         UserDefaults.standard.set(true, forKey: Self.downloadsExplainedKey)
         let target = collectTargetDescription
         inform(title: L("新下载会自动移进分区", "New downloads will move into the zone"),
-               text: L("以后浏览器下载完成的文件（「下载」文件夹和桌面上新出现的），会被移到\(target)，「下载」里不再保留，分区里看到的就是它。原来就有的文件不动。\n想放回去：菜单栏「撤销上次移动」，或把它从分区拖出去。\n接下来系统会问一次能不能读「下载」文件夹，请点「允许」。",
-                       "From now on, finished browser downloads (new ones in Downloads or on the Desktop) are moved to \(target) and no longer stay in Downloads; the zone shows them. Existing files are left alone.\nTo put one back: Undo Last Move in the menu bar, or drag it out of the zone.\nmacOS will ask once whether Tuck can read the Downloads folder. Please click Allow."))
+               text: L("以后新存到「下载」文件夹或桌面上的文件（浏览器下载、网页里「另存为」、别的软件保存都算，截图默认不算），会被移到\(target)，原处不再保留，分区里看到的就是它。原来就有的文件不动。\n想放回去：菜单栏「撤销上次移动」，或把它从分区拖出去。\n接下来系统会问一次能不能读「下载」文件夹，请点「允许」。",
+                       "From now on, new files saved to Downloads or the Desktop (browser downloads, Save As from a web page, saves from other apps; not screenshots by default) are moved to \(target) and don't stay behind; the zone shows them. Existing files are left alone.\nTo put one back: Undo Last Move in the menu bar, or drag it out of the zone.\nmacOS will ask once whether Tuck can read the Downloads folder. Please click Allow."))
     }
 
     private var collectTargetDescription: String {
@@ -145,8 +158,14 @@ extension ZoneWindowManager {
         return "「\(folder.path)」"
     }
 
-    func setCollectWebOnly(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: Self.collectWebOnlyKey)
+    /// 有没有程序正打开着这个文件（还在写 / 正在用）：有就先不搬，免得影响那个软件。
+    /// 只看得到自己用户的程序；看不到的当作没开（同时还要求连续两次大小不变）。
+    static func isOpenByAnyProcess(_ path: String) -> Bool {
+        var pids = [pid_t](repeating: 0, count: 64)
+        let bytes = pids.withUnsafeMutableBytes { buffer in
+            proc_listpidspath(UInt32(PROC_ALL_PIDS), 0, path, 0, buffer.baseAddress, Int32(buffer.count))
+        }
+        return bytes > 0
     }
 
     /// 开着就监听「下载」和桌面（第一次看时记下里面现有的全部东西，它们永远不会被收）；关了就停。
@@ -174,28 +193,53 @@ extension ZoneWindowManager {
         desktopCollectWatcher?.watch(paths: Set(downloadCollectors.keys))
     }
 
-    /// 看一次：「下载」和桌面里确认下完的新下载，移进下载分区的文件夹（分区里自动出现）。
+    /// 看一次：「下载」和桌面里确认写完的新文件，移进下载分区的文件夹（分区里自动出现）。
     /// 只用同一块磁盘上的原子改名（不复制），重名加编号、绝不覆盖；可以用「撤销上次移动」放回原处。
     func collectDesktopDownloads() {
         desktopCollectRetry?.cancel()
         guard let zoneID = collectZoneID, let target = model.zone(id: zoneID)?.backingFolderURL else { return }
+        let shotTarget = screenshotZoneID.flatMap { model.zone(id: $0)?.backingFolderURL } ?? target
+        let includeShots = collectScreenshots
         let fm = FileManager.default
         var anyPending = false
         var records: [MoveUndoRecord] = []
+        // 已经是某个分区的入口（比如在分区里「制作替身」「压缩」「新建文件夹」刚做出来的桌面文件）：不搬
+        let inZones = Set(model.document.zones.flatMap { $0.items.map { $0.url.standardizedFileURL.path } })
         for (key, var collector) in downloadCollectors {
             let folder = URL(fileURLWithPath: key, isDirectory: true)
             guard let names = try? fm.contentsOfDirectory(atPath: folder.path) else { continue }
-            let entries: [DesktopDownloadCollector.Entry] = names.map { name in
-                guard collector.needsLook(name) else { return .init(name: name, size: 0, downloadedAt: nil) }
+            var entries: [DesktopDownloadCollector.Entry] = []
+            for name in names {
+                guard collector.needsLook(name) else {
+                    entries.append(.init(name: name, size: 0, createdAt: nil))
+                    continue
+                }
                 let url = folder.appendingPathComponent(name)
                 var st = stat()
-                let size: Int64 = lstat(url.path, &st) == 0 ? Int64(st.st_size) : -1
-                return .init(name: name, size: size, downloadedAt: DownloadFiles.quarantineDate(of: url))
+                guard lstat(url.path, &st) == 0 else { continue }
+                // 是 Tuck 刚移进分区、又被拿回来的同一个文件（拖回桌面 / 撤销），或者已经是分区入口：不再收
+                if movedOutInodes.contains(UInt64(st.st_ino)) || inZones.contains(url.standardizedFileURL.path) {
+                    collector.forget(name)
+                    entries.append(.init(name: name, size: 0, createdAt: nil))
+                    continue
+                }
+                let isDir = (st.st_mode & S_IFMT) == S_IFDIR
+                let created = Date(timeIntervalSince1970: TimeInterval(st.st_birthtimespec.tv_sec))
+                entries.append(.init(
+                    name: name,
+                    size: isDir ? 1 : Int64(st.st_size),
+                    createdAt: created,
+                    isScreenshot: DownloadFiles.isScreenshot(url: url),
+                    inUse: !isDir && Self.isOpenByAnyProcess(url.path)
+                ))
             }
-            for name in collector.step(entries, now: Date(), webOnly: collectWebOnly) {
-                let source = folder.appendingPathComponent(name)
-                if let moved = DownloadMover.move(source, into: target) {
+            for item in collector.step(entries, now: Date(), includeScreenshots: includeShots) {
+                let source = folder.appendingPathComponent(item.name)
+                var st = stat()
+                let inode = lstat(source.path, &st) == 0 ? UInt64(st.st_ino) : 0
+                if let moved = DownloadMover.move(source, into: item.isScreenshot ? shotTarget : target) {
                     records.append(MoveUndoRecord(source: source, destination: moved))
+                    if inode != 0 { movedOutInodes.insert(inode) }
                 }
             }
             anyPending = anyPending || collector.hasPending
@@ -268,12 +312,28 @@ final class CollectDownloadsMenu: NSObject, NSMenuDelegate {
         create.target = self
         menu.addItem(create)
         menu.addItem(.separator())
-        let web = NSMenuItem(title: L("只收从网上下载的文件（推荐）", "Only files downloaded from the web (recommended)"), action: #selector(toggleWebOnly(_:)), keyEquivalent: "")
-        web.target = self
-        web.state = manager.collectWebOnly ? .on : .off
-        menu.addItem(web)
-        let hint = NSMenuItem(title: L("打开后新下载完成的文件会从「下载」/ 桌面移进这个分区，原处不再保留；「撤销上次移动」可放回",
-                                       "New finished downloads move from Downloads / Desktop into this zone and don't stay there; Undo Last Move puts one back"),
+        let shots = NSMenuItem(title: L("截图也收", "Include Screenshots"), action: #selector(toggleScreenshots(_:)), keyEquivalent: "")
+        shots.target = self
+        shots.state = manager.collectScreenshots ? .on : .off
+        menu.addItem(shots)
+        if manager.collectScreenshots {
+            let shotZone = manager.screenshotZoneID
+            let same = NSMenuItem(title: L("截图放进：同一个分区", "Screenshots go to: the same zone"), action: #selector(pickShotZone(_:)), keyEquivalent: "")
+            same.target = self
+            same.indentationLevel = 1
+            same.state = shotZone == nil ? .on : .off
+            menu.addItem(same)
+            for zone in manager.model.document.zones where zone.liveFolder && zone.id != current {
+                let item = NSMenuItem(title: L("截图放进：\(zone.name)", "Screenshots go to: \(zone.name)"), action: #selector(pickShotZone(_:)), keyEquivalent: "")
+                item.target = self
+                item.indentationLevel = 1
+                item.representedObject = zone.id.uuidString
+                item.state = shotZone == zone.id ? .on : .off
+                menu.addItem(item)
+            }
+        }
+        let hint = NSMenuItem(title: L("打开后新存到「下载」/ 桌面的文件（下载、另存为、别的软件保存）移进这个分区，原处不再保留；「撤销上次移动」可放回",
+                                       "New files saved to Downloads / Desktop (downloads, Save As, other apps) move into this zone; Undo Last Move puts one back"),
                               action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
@@ -289,8 +349,12 @@ final class CollectDownloadsMenu: NSObject, NSMenuDelegate {
         manager?.setCollectZone(id)
     }
 
-    @objc private func toggleWebOnly(_ sender: NSMenuItem) {
+    @objc private func toggleScreenshots(_ sender: NSMenuItem) {
         guard let manager else { return }
-        manager.setCollectWebOnly(!manager.collectWebOnly)
+        manager.setCollectScreenshots(!manager.collectScreenshots)
+    }
+
+    @objc private func pickShotZone(_ sender: NSMenuItem) {
+        manager?.setScreenshotZone((sender.representedObject as? String).flatMap(UUID.init(uuidString:)))
     }
 }

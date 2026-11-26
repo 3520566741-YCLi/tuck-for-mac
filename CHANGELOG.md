@@ -3,6 +3,17 @@
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。所有旧版本都保留在 [Releases](../../releases)。
 Versions follow [Semantic Versioning](https://semver.org/). Every old version stays in [Releases](../../releases).
 
+## v2.4.0 · 2026-11-26
+
+怎么存都进分区，截图你说了算。 / However you save it, it lands in the zone; screenshots are up to you.
+
+- **新文件自动移进分区覆盖所有保存方式**：不再只认浏览器的「下载」标记，网页里「另存为」、别的软件保存到桌面或「下载」的新文件也会移进下载分区。只收新建且已写完的：还被软件打开着的先等它关、Office 的 ~$ 锁文件和各种下载临时文件不碰；从别处挪进来的老文件、从分区拖回桌面 / 撤销放回的文件不会再被收走。
+  **Moving new files covers every way of saving**: no longer limited to files carrying the browser's download mark; Save As from a web page and saves from other apps into the Desktop or Downloads are moved too. Only newly created, fully written files: files still open in an app wait until closed, Office ~$ lock files and download temp files are left alone, and old files moved in or files you drag back / undo aren't taken again.
+- **截图可选**：截图默认不收；菜单里勾「截图也收」，还能选截图放进哪个下载分区。原来的「只收从网上下载的文件」开关去掉。
+  **Screenshots optional**: not collected by default; tick “Include Screenshots” and pick which download zone they go to. The old “Only files downloaded from the web” switch is gone.
+- 外观面板跟着系统深浅色：白天不再是浅底配白字。
+  The Appearance panel follows the system light / dark look: no more white text on a light panel in daytime.
+
 ## v2.3.0 · 2026-11-24
 
 每个分区自己的玻璃，下载直接进分区。 / Glass per zone, downloads straight into a zone.

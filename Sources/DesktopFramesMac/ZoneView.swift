@@ -232,6 +232,8 @@ struct ZoneView: View {
             // 面板开在按钮右边（分区外侧），不盖住分区里的东西；右边放不下时系统会自动换到别的边
             .popover(isPresented: $showAppearancePanel, arrowEdge: .trailing) {
                 AppearancePanel(zone: zone, model: model)
+                    // 面板的底色跟系统深浅色走；分区里为了玻璃可读性强制的浅色字不能带进面板（白天会白字配浅底）
+                    .environment(\.colorScheme, systemColorScheme)
             }
             .help(L("外观设置（质感 / 透明度 / 主题色）", "Appearance (glass / opacity / tint)"))
 

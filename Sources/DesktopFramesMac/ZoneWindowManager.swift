@@ -28,6 +28,8 @@ final class ZoneWindowManager: NSObject, NSWindowDelegate, NSMenuDelegate, NSMen
     var desktopCollectRetry: DispatchWorkItem?
     /// 正在打开「新下载自动移进」的那个分区（说明文字里要用到它的位置）。
     var pendingCollectZone: UUID?
+    /// Tuck 移进下载分区的文件（按文件编号记）：用户再把它拖回桌面 / 「下载」，或撤销放回时，不会又被收走。
+    var movedOutInodes: Set<UInt64> = []
     /// 当前“桌面”（测试实例可以换成测试目录）。
     var desktopURL: URL? { desktopHider?.desktop }
     /// 桌面原图标隐藏：对账器与“Tuck 隐藏过哪些文件”的记录（单独文件，不进布局 / 备份）。
